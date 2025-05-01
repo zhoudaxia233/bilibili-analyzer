@@ -1,7 +1,8 @@
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from urllib.parse import urlparse
-from bilibili_api import video, user
+import aiohttp
+from bilibili_api import video, user, Credential
 from pydantic import BaseModel, Field
 
 
@@ -22,11 +23,76 @@ class VideoInfo(BaseModel):
     owner_mid: int = Field(..., description="Uploader's ID")
 
 
+class VideoTextConfig(BaseModel):
+    """Configuration for video text content extraction"""
+
+    comment_limit: int = Field(
+        default=10, description="Number of top comments to include"
+    )
+    include_subtitles: bool = Field(
+        default=True, description="Whether to include video subtitles"
+    )
+    include_comments: bool = Field(
+        default=True, description="Whether to include video comments"
+    )
+    include_uploader_info: bool = Field(
+        default=True, description="Whether to include detailed uploader information"
+    )
+    subtitle_markdown: bool = Field(
+        default=False, description="Whether to format subtitles in markdown"
+    )
+
+
+class VideoTextContent(BaseModel):
+    """Model for video text content in markdown format"""
+
+    basic_info: str = Field(..., description="Basic video information in markdown")
+    uploader_info: Optional[str] = Field(
+        None, description="Uploader information in markdown"
+    )
+    tags_and_categories: Optional[str] = Field(
+        None, description="Tags and categories in markdown"
+    )
+    subtitles: Optional[str] = Field(None, description="Video subtitles in markdown")
+    comments: Optional[str] = Field(None, description="Top comments in markdown")
+
+    def to_markdown(self) -> str:
+        """Convert all content to a single markdown string"""
+        sections = [self.basic_info]
+
+        if self.uploader_info:
+            sections.append(self.uploader_info)
+        if self.tags_and_categories:
+            sections.append(self.tags_and_categories)
+        if self.subtitles:
+            sections.append(self.subtitles)
+        if self.comments:
+            sections.append(self.comments)
+
+        return "\n\n".join(sections)
+
+
 class BilibiliClient:
     """Client for interacting with Bilibili API"""
 
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        sessdata: Optional[str] = None,
+        bili_jct: Optional[str] = None,
+        buvid3: Optional[str] = None,
+    ):
+        """Initialize the client with optional credentials
+
+        Args:
+            sessdata: SESSDATA cookie value
+            bili_jct: bili_jct cookie value
+            buvid3: buvid3 cookie value
+        """
+        self.credential = None
+        if sessdata or bili_jct or buvid3:
+            self.credential = Credential(
+                sessdata=sessdata, bili_jct=bili_jct, buvid3=buvid3
+            )
 
     def _extract_bvid(self, identifier: str) -> str:
         """Extract BVID from Bilibili URL or return BVID directly.
@@ -105,3 +171,223 @@ class BilibiliClient:
             )
             for item in videos["list"]["vlist"]
         ]
+
+    async def _format_basic_info(self, info: dict) -> str:
+        """Format basic video information as markdown"""
+        upload_time = self._format_timestamp(info["pubdate"])
+        duration_str = f"{info['duration'] // 60}:{info['duration'] % 60:02d}"
+        stats = info["stat"]
+
+        return f"""# {info['title']}
+
+{info['desc']}
+
+## Video Information
+- Duration: {duration_str}
+- Upload Time: {upload_time}
+- Views: {stats['view']:,}
+- Likes: {stats['like']:,}
+- Coins: {stats['coin']:,}
+- Favorites: {stats['favorite']:,}
+- Shares: {stats['share']:,}"""
+
+    async def _format_uploader_info(self, info: dict) -> str:
+        """Format uploader information as markdown"""
+        u = user.User(info["owner"]["mid"])
+        user_info = await u.get_user_info()
+
+        # Get follower count using get_relation_info
+        relation_info = await u.get_relation_info()
+        follower_count = relation_info["follower"]
+
+        return f"""## Uploader Information
+- Name: {user_info['name']}
+- Level: {user_info['level']}
+- Bio: {user_info.get('sign', 'No bio')}
+- Followers: {follower_count:,}"""
+
+    async def _format_tags_and_categories(self, v: video.Video) -> str:
+        """Format video tags and categories as markdown"""
+        tags = await v.get_tags()
+        tag_names = [tag["tag_name"] for tag in tags]
+
+        return f"""## Tags and Categories
+{', '.join(tag_names)}"""
+
+    async def _format_subtitles(
+        self, v: video.Video, cid: int, markdown: bool = False
+    ) -> Optional[str]:
+        """Format video subtitles as markdown or plain text
+
+        Args:
+            v: Video object
+            cid: Video CID
+            markdown: Whether to format output as markdown
+        Returns:
+            Formatted subtitle text or None if no subtitles found
+        """
+        try:
+            # Get all available subtitle lists
+            subtitle_lists = await v.get_subtitle(cid=cid)
+            print(f"Debug - Raw subtitle lists: {subtitle_lists}")  # Debug print
+
+            if not subtitle_lists or not isinstance(subtitle_lists, dict):
+                print("Debug - No subtitles found or invalid format")  # Debug print
+                return None
+
+            subtitles = subtitle_lists.get("subtitles", [])
+            if not subtitles:
+                print("Debug - No subtitles in the list")  # Debug print
+                return None
+
+            all_subtitles = []
+
+            for subtitle in subtitles:
+                print(f"Debug - Processing subtitle: {subtitle}")  # Debug print
+
+                # Get subtitle language and url
+                lang = subtitle.get("lan_doc", "unknown")
+                subtitle_url = subtitle.get("subtitle_url", "")
+
+                if not subtitle_url:
+                    print(f"Debug - No subtitle URL for language {lang}")  # Debug print
+                    continue
+
+                # Add https: prefix if URL starts with //
+                if subtitle_url.startswith("//"):
+                    subtitle_url = f"https:{subtitle_url}"
+
+                print(
+                    f"Debug - Fetching subtitle from URL: {subtitle_url}"
+                )  # Debug print
+
+                # Format subtitle information
+                if markdown:
+                    all_subtitles.append(f"\n### Subtitles ({lang})\n")
+                else:
+                    all_subtitles.append(f"\nSubtitles ({lang})\n")
+
+                # Get and process actual subtitle content
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(subtitle_url) as response:
+                            if response.status != 200:
+                                print(
+                                    f"Debug - Failed to fetch subtitle content: HTTP {response.status}"
+                                )
+                                continue
+
+                            raw_content = await response.json()
+                            print(
+                                f"Debug - Raw content type: {type(raw_content)}"
+                            )  # Debug print
+                            if raw_content:
+                                print(
+                                    f"Debug - First subtitle entry: {str(raw_content)[:200]}"
+                                )  # Debug print
+
+                    if isinstance(raw_content, dict) and "body" in raw_content:
+                        for line in raw_content["body"]:
+                            start_time = line.get("from", 0)
+                            content = line.get("content", "")
+                            all_subtitles.append(f"[{start_time:.2f}] {content}")
+                    else:
+                        print(
+                            f"Debug - Unexpected subtitle data format: {raw_content[:100] if raw_content else None}"
+                        )  # Debug print
+                except aiohttp.ClientError as e:
+                    print(
+                        f"Debug - Network error fetching subtitle: {str(e)}"
+                    )  # Debug print
+                    continue
+                except Exception as sub_error:
+                    print(
+                        f"Debug - Error processing subtitle: {str(sub_error)}"
+                    )  # Debug print
+                    continue
+
+            if not all_subtitles:
+                print("Debug - No subtitle content processed")  # Debug print
+                return None
+
+            if markdown:
+                return "## Video Subtitles\n" + "\n".join(all_subtitles)
+            else:
+                return "Video Subtitles\n" + "\n".join(all_subtitles)
+
+        except Exception as e:
+            print(f"Debug - Main error in subtitle processing: {str(e)}")  # Debug print
+            return None
+
+    async def _format_comments(self, v: video.Video, limit: int) -> Optional[str]:
+        """Format video comments as markdown"""
+        try:
+            comments = await v.get_comments(page_index=1, page_size=limit)
+            if not comments["replies"]:
+                return None
+
+            comment_text = []
+            for comment in comments["replies"]:
+                author = comment["member"]["uname"]
+                content = comment["content"]["message"]
+                likes = comment["like"]
+                comment_text.append(f"**{author}** (👍 {likes:,}):\n{content}\n")
+
+            return "## Top Comments\n" + "\n".join(comment_text)
+        except Exception:
+            return None
+
+    async def get_video_text_content(
+        self, identifier: str, config: Optional[VideoTextConfig] = None
+    ) -> VideoTextContent:
+        """Get video text content in markdown format
+
+        Args:
+            identifier: A Bilibili video URL or BVID
+            config: Configuration for text content extraction
+
+        Returns:
+            VideoTextContent object containing markdown formatted text
+        """
+        config = config or VideoTextConfig()
+        bvid = self._extract_bvid(identifier)
+
+        # Create video instance with credential if available
+        v = video.Video(bvid=bvid, credential=self.credential)
+        info = await v.get_info()
+        print(f"Debug - Video info: bvid={bvid}, cid={info.get('cid')}")  # Debug print
+
+        # Basic info is always included
+        basic_info = await self._format_basic_info(info)
+
+        # Optional sections based on config
+        uploader_info = (
+            await self._format_uploader_info(info)
+            if config.include_uploader_info
+            else None
+        )
+
+        tags_and_categories = await self._format_tags_and_categories(v)
+
+        subtitles = None
+        if config.include_subtitles:
+            try:
+                subtitles = await self._format_subtitles(
+                    v, info["cid"], config.subtitle_markdown
+                )
+            except Exception as e:
+                print(f"Debug - Error getting subtitles: {str(e)}")
+
+        comments = (
+            await self._format_comments(v, config.comment_limit)
+            if config.include_comments
+            else None
+        )
+
+        return VideoTextContent(
+            basic_info=basic_info,
+            uploader_info=uploader_info,
+            tags_and_categories=tags_and_categories,
+            subtitles=subtitles,
+            comments=comments,
+        )

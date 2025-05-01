@@ -1,7 +1,7 @@
 [project]
 name = "bilibili-analyzer"
 version = "0.1.0"
-description = ""
+description = "A tool to analyze Bilibili videos"
 authors = [
     {name = "Zheng",email = "yootaoo@gmail.com"}
 ]
