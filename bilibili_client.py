@@ -4,6 +4,9 @@ from urllib.parse import urlparse
 import aiohttp
 from bilibili_api import video, user, Credential
 from pydantic import BaseModel, Field
+import logging
+
+logger = logging.getLogger("bilibili_client")
 
 
 class VideoInfo(BaseModel):
@@ -229,37 +232,35 @@ class BilibiliClient:
         try:
             # Get all available subtitle lists
             subtitle_lists = await v.get_subtitle(cid=cid)
-            print(f"Debug - Raw subtitle lists: {subtitle_lists}")  # Debug print
+            logger.debug(f"Raw subtitle lists: {subtitle_lists}")
 
             if not subtitle_lists or not isinstance(subtitle_lists, dict):
-                print("Debug - No subtitles found or invalid format")  # Debug print
+                logger.debug("No subtitles found or invalid format")
                 return None
 
             subtitles = subtitle_lists.get("subtitles", [])
             if not subtitles:
-                print("Debug - No subtitles in the list")  # Debug print
+                logger.debug("No subtitles in the list")
                 return None
 
             all_subtitles = []
 
             for subtitle in subtitles:
-                print(f"Debug - Processing subtitle: {subtitle}")  # Debug print
+                logger.debug(f"Processing subtitle: {subtitle}")
 
                 # Get subtitle language and url
                 lang = subtitle.get("lan_doc", "unknown")
                 subtitle_url = subtitle.get("subtitle_url", "")
 
                 if not subtitle_url:
-                    print(f"Debug - No subtitle URL for language {lang}")  # Debug print
+                    logger.debug(f"No subtitle URL for language {lang}")
                     continue
 
                 # Add https: prefix if URL starts with //
                 if subtitle_url.startswith("//"):
                     subtitle_url = f"https:{subtitle_url}"
 
-                print(
-                    f"Debug - Fetching subtitle from URL: {subtitle_url}"
-                )  # Debug print
+                logger.debug(f"Fetching subtitle from URL: {subtitle_url}")
 
                 # Format subtitle information
                 if markdown:
@@ -272,19 +273,17 @@ class BilibiliClient:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(subtitle_url) as response:
                             if response.status != 200:
-                                print(
-                                    f"Debug - Failed to fetch subtitle content: HTTP {response.status}"
+                                logger.debug(
+                                    f"Failed to fetch subtitle content: HTTP {response.status}"
                                 )
                                 continue
 
                             raw_content = await response.json()
-                            print(
-                                f"Debug - Raw content type: {type(raw_content)}"
-                            )  # Debug print
+                            logger.debug(f"Raw content type: {type(raw_content)}")
                             if raw_content:
-                                print(
-                                    f"Debug - First subtitle entry: {str(raw_content)[:200]}"
-                                )  # Debug print
+                                logger.debug(
+                                    f"First subtitle entry: {str(raw_content)[:200]}"
+                                )
 
                     if isinstance(raw_content, dict) and "body" in raw_content:
                         for line in raw_content["body"]:
@@ -292,22 +291,18 @@ class BilibiliClient:
                             content = line.get("content", "")
                             all_subtitles.append(f"[{start_time:.2f}] {content}")
                     else:
-                        print(
-                            f"Debug - Unexpected subtitle data format: {raw_content[:100] if raw_content else None}"
-                        )  # Debug print
+                        logger.debug(
+                            f"Unexpected subtitle data format: {raw_content[:100] if raw_content else None}"
+                        )
                 except aiohttp.ClientError as e:
-                    print(
-                        f"Debug - Network error fetching subtitle: {str(e)}"
-                    )  # Debug print
+                    logger.debug(f"Network error fetching subtitle: {str(e)}")
                     continue
                 except Exception as sub_error:
-                    print(
-                        f"Debug - Error processing subtitle: {str(sub_error)}"
-                    )  # Debug print
+                    logger.debug(f"Error processing subtitle: {str(sub_error)}")
                     continue
 
             if not all_subtitles:
-                print("Debug - No subtitle content processed")  # Debug print
+                logger.debug("No subtitle content processed")
                 return None
 
             if markdown:
@@ -316,7 +311,7 @@ class BilibiliClient:
                 return "Video Subtitles\n" + "\n".join(all_subtitles)
 
         except Exception as e:
-            print(f"Debug - Main error in subtitle processing: {str(e)}")  # Debug print
+            logger.debug(f"Main error in subtitle processing: {str(e)}")
             return None
 
     async def _format_comments(self, v: video.Video, limit: int) -> Optional[str]:
@@ -355,7 +350,7 @@ class BilibiliClient:
         # Create video instance with credential if available
         v = video.Video(bvid=bvid, credential=self.credential)
         info = await v.get_info()
-        print(f"Debug - Video info: bvid={bvid}, cid={info.get('cid')}")  # Debug print
+        logger.debug(f"Video info: bvid={bvid}, cid={info.get('cid')}")
 
         # Basic info is always included
         basic_info = await self._format_basic_info(info)
@@ -376,7 +371,7 @@ class BilibiliClient:
                     v, info["cid"], config.subtitle_markdown
                 )
             except Exception as e:
-                print(f"Debug - Error getting subtitles: {str(e)}")
+                logger.debug(f"Error getting subtitles: {str(e)}")
 
         comments = (
             await self._format_comments(v, config.comment_limit)

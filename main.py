@@ -8,6 +8,7 @@ from rich.table import Table
 from rich import print as rprint
 from rich.markdown import Markdown
 from bilibili_client import BilibiliClient, VideoInfo, VideoTextConfig
+import logging
 
 
 def load_credentials():
@@ -157,8 +158,6 @@ async def main():
         help="Output file path (if not specified, print to console)",
         default=None,
     )
-
-    # Add credential arguments that override .env values
     parser.add_argument(
         "--sessdata",
         help="SESSDATA cookie value (overrides .env)",
@@ -174,8 +173,17 @@ async def main():
         help="buvid3 cookie value (overrides .env)",
         default=None,
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging output",
+    )
 
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    if args.debug:
+        logging.getLogger("bilibili_client").setLevel(logging.DEBUG)
 
     # Load credentials from .env
     credentials = load_credentials()
