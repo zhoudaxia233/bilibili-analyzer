@@ -1,10 +1,12 @@
 from typing import List, Optional
+from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
+import subprocess
+import logging
 import aiohttp
 from bilibili_api import video, user, Credential
 from pydantic import BaseModel, Field
-import logging
 
 logger = logging.getLogger("bilibili_client")
 
@@ -372,6 +374,49 @@ class BilibiliClient:
                 )
             except Exception as e:
                 logger.debug(f"Error getting subtitles: {str(e)}")
+
+        # Whisper fallback if no subtitles
+        if config.include_subtitles and not subtitles:
+            confirm = (
+                input(
+                    "No subtitles found. Download audio and generate subtitles with Whisper? This may take a long time. [y/N]: "
+                )
+                .strip()
+                .lower()
+            )
+            if confirm == "y":
+                # Prepare paths
+                base_dir = Path("video_texts") / bvid
+                base_dir.mkdir(parents=True, exist_ok=True)
+                audio_path = base_dir / "temp_audio.m4a"
+                transcript_path = base_dir / "whisper_transcript.txt"
+                # Download audio
+                from main import ensure_bilibili_url, download_audio
+
+                url = ensure_bilibili_url(identifier)
+                download_audio(url, output_path=str(audio_path))
+                # Run Whisper
+                cmd = [
+                    "whisper",
+                    str(audio_path),
+                    "--model",
+                    "turbo",
+                    "--output_format",
+                    "txt",
+                    "--output_dir",
+                    str(base_dir),
+                ]
+                subprocess.run(cmd, check=True)
+                # Move/rename output if needed
+                generated_txt = base_dir / (audio_path.stem + ".txt")
+                if generated_txt != transcript_path:
+                    generated_txt.rename(transcript_path)
+                transcript = transcript_path.read_text(encoding="utf-8")
+                subtitles = "## Whisper Transcript\n" + transcript
+                # Clean up temp audio
+                audio_path.unlink(missing_ok=True)
+            else:
+                subtitles = "No subtitles available and user declined Whisper fallback."
 
         comments = (
             await self._format_comments(v, config.comment_limit)
