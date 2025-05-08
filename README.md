@@ -44,6 +44,21 @@ Using a user's UID:
 poetry run python main.py 123456 --user
 ```
 
+## Download Audio Only
+
+You can download only the audio track of a Bilibili video using the `--audio` flag. This uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) under the hood and requires [ffmpeg](https://ffmpeg.org/) to be installed on your system.
+
+### Usage
+
+```bash
+python main.py <video_url_or_BVID> --audio
+```
+
+This will download the best available audio stream for the given video URL or BVID.
+
+**Note:**
+- [ffmpeg](https://ffmpeg.org/) must be installed and available in your system PATH for audio extraction to work.
+
 ## Output
 
 The tool will display the information in a nicely formatted table, including:

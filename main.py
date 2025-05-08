@@ -2,13 +2,14 @@ import os
 from pathlib import Path
 import asyncio
 import argparse
+import subprocess
+import logging
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 from rich.markdown import Markdown
 from bilibili_client import BilibiliClient, VideoInfo, VideoTextConfig
-import logging
 
 
 def load_credentials():
@@ -113,6 +114,23 @@ def save_content(content: str, output_path: str = None):
         console.print(md)
 
 
+def download_audio(url: str, output_path: str = None):
+    """Download audio from a Bilibili video using yt-dlp."""
+    cmd = ["yt-dlp", "-f", "ba", url]
+    if output_path:
+        cmd += ["-o", output_path]
+    subprocess.run(cmd, check=True)
+
+
+def ensure_bilibili_url(identifier: str) -> str:
+    """If identifier is a BVID, assemble the full Bilibili video URL."""
+    if (identifier.startswith("BV") or identifier.startswith("bv")) and len(
+        identifier
+    ) >= 12:
+        return f"https://www.bilibili.com/video/{identifier}"
+    return identifier
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Bilibili Video Information Fetcher")
     parser.add_argument("identifier", help="Bilibili video URL, BVID, or user UID")
@@ -178,12 +196,27 @@ async def main():
         action="store_true",
         help="Enable debug logging output",
     )
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="Download audio file of the video using yt-dlp",
+    )
 
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
     if args.debug:
         logging.getLogger("bilibili_client").setLevel(logging.DEBUG)
+
+    if args.audio:
+        # Download audio and exit
+        try:
+            url = ensure_bilibili_url(args.identifier)
+            download_audio(url)
+            rprint("[green]Audio download complete.[/green]")
+        except Exception as e:
+            rprint(f"[red]Audio download failed: {e}[/red]")
+        return
 
     # Load credentials from .env
     credentials = load_credentials()
