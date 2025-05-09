@@ -116,7 +116,10 @@ class SimpleLLM:
             "You are an expert in correcting automatic speech recognition (ASR) transcripts. "
             "Only fix obvious recognition errors, such as misspelled named entities, common words, or phrases, based on context and general knowledge. "
             "Do not change the sentence structure, style, or meaning. Do not polish or rewrite the text. "
-            "The transcript may contain both Chinese and English."
+            "The transcript is mostly in Chinese, with occasional English or other languages. "
+            "Your response MUST follow this exact format with these exact section markers:\n"
+            "CORRECTED_TRANSCRIPT:\n[The corrected transcript with no introduction or explanation]\n\n"
+            "KEY_CORRECTIONS:\n[A bullet-point list of key corrections you made, using the format '* Original: X -> Corrected: Y']"
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -499,15 +502,47 @@ class BilibiliClient:
                 # LLM post-processing (all config from env)
                 llm = SimpleLLM()
                 try:
-                    corrected = llm.call(transcript)
-                    corrected_path.write_text(corrected, encoding="utf-8")
+                    # Get both corrected transcript and key corrections in one call
+                    full_response = llm.call(transcript)
+
+                    # Extract sections using the markers
+                    corrected_transcript = ""
+                    key_corrections = ""
+
+                    # Split the response into sections
+                    if (
+                        "CORRECTED_TRANSCRIPT:" in full_response
+                        and "KEY_CORRECTIONS:" in full_response
+                    ):
+                        parts = full_response.split("CORRECTED_TRANSCRIPT:", 1)[1]
+                        if "KEY_CORRECTIONS:" in parts:
+                            corrected_transcript, key_corrections = parts.split(
+                                "KEY_CORRECTIONS:", 1
+                            )
+                            corrected_transcript = corrected_transcript.strip()
+                            key_corrections = key_corrections.strip()
+                    else:
+                        # Fallback if the LLM didn't follow the format
+                        corrected_transcript = full_response
+
+                    # Save corrected transcript
+                    corrected_path.write_text(corrected_transcript, encoding="utf-8")
+
+                    # Save key corrections if available
+                    if key_corrections:
+                        (base_dir / "whisper_transcript_corrections.txt").write_text(
+                            key_corrections, encoding="utf-8"
+                        )
+
                     console.print(
                         "[green]LLM post-processing complete. Corrected transcript ready.[/green]"
                     )
                     logger.info(
                         "LLM post-processing complete. Corrected transcript ready."
                     )
-                    subtitles = "## Whisper Transcript (Corrected)\n" + corrected
+                    subtitles = (
+                        "## Whisper Transcript (Corrected)\n" + corrected_transcript
+                    )
                 except Exception as e:
                     logger.debug(f"LLM post-processing failed: {e}")
                     corrected_path.write_text(transcript, encoding="utf-8")
