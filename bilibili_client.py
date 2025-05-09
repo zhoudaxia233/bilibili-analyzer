@@ -10,8 +10,10 @@ import requests
 from bilibili_api import video, user, Credential
 from pydantic import BaseModel, Field
 import openai
+from rich.console import Console
 
 logger = logging.getLogger("bilibili_client")
+console = Console()
 
 
 class VideoInfo(BaseModel):
@@ -437,53 +439,84 @@ class BilibiliClient:
 
         # Whisper fallback if no subtitles
         if config.include_subtitles and not subtitles:
-            logger.info("No subtitles found. Starting Whisper audio extraction...")
             base_dir = Path("video_texts") / bvid
             base_dir.mkdir(parents=True, exist_ok=True)
             audio_path = base_dir / "temp_audio.m4a"
             transcript_path = base_dir / "whisper_transcript.txt"
-            # Download audio
-            from main import ensure_bilibili_url, download_audio
-
-            url = ensure_bilibili_url(identifier)
-            download_audio(url, output_path=str(audio_path))
-            logger.info(
-                f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
-            )
-            # Run Whisper
-            cmd = [
-                "whisper",
-                str(audio_path),
-                "--model",
-                "turbo",
-                "--output_format",
-                "txt",
-                "--output_dir",
-                str(base_dir),
-            ]
-            subprocess.run(cmd, check=True)
-            # Move/rename output if needed
-            generated_txt = base_dir / (audio_path.stem + ".txt")
-            if generated_txt != transcript_path:
-                generated_txt.rename(transcript_path)
-            logger.info(
-                f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
-            )
-            transcript = transcript_path.read_text(encoding="utf-8")
-            # LLM post-processing (all config from env)
-            llm = SimpleLLM()
             corrected_path = base_dir / "whisper_transcript_corrected.txt"
-            try:
-                corrected = llm.call(transcript)
-                logger.info("LLM post-processing complete. Corrected transcript ready.")
-                corrected_path.write_text(corrected, encoding="utf-8")
+
+            # If both transcript and corrected transcript exist and are non-empty, skip extraction and correction
+            if (
+                transcript_path.exists()
+                and corrected_path.exists()
+                and transcript_path.stat().st_size > 0
+                and corrected_path.stat().st_size > 0
+            ):
+                console.print(
+                    f"[yellow]Transcript and corrected transcript already exist. Skipping Whisper and LLM post-processing.[/yellow]"
+                )
+                corrected = corrected_path.read_text(encoding="utf-8")
                 subtitles = "## Whisper Transcript (Corrected)\n" + corrected
-            except Exception as e:
-                logger.debug(f"LLM post-processing failed: {e}")
-                corrected_path.write_text(transcript, encoding="utf-8")
-                subtitles = "## Whisper Transcript\n" + transcript
-            # Clean up temp audio
-            audio_path.unlink(missing_ok=True)
+            else:
+                console.print(
+                    "[cyan]No subtitles found. Starting Whisper audio extraction...[/cyan]"
+                )
+                logger.info("No subtitles found. Starting Whisper audio extraction...")
+                # Download audio
+                from main import ensure_bilibili_url, download_audio
+
+                url = ensure_bilibili_url(identifier)
+                download_audio(url, output_path=str(audio_path))
+                console.print(
+                    f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
+                )
+                logger.info(
+                    f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
+                )
+                # Run Whisper
+                cmd = [
+                    "whisper",
+                    str(audio_path),
+                    "--model",
+                    "turbo",
+                    "--output_format",
+                    "txt",
+                    "--output_dir",
+                    str(base_dir),
+                ]
+                subprocess.run(cmd, check=True)
+                # Move/rename output if needed
+                generated_txt = base_dir / (audio_path.stem + ".txt")
+                if generated_txt != transcript_path:
+                    generated_txt.rename(transcript_path)
+                console.print(
+                    f"[cyan]Whisper transcript generated at {transcript_path}. Starting LLM post-processing...[/cyan]"
+                )
+                logger.info(
+                    f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
+                )
+                transcript = transcript_path.read_text(encoding="utf-8")
+                # LLM post-processing (all config from env)
+                llm = SimpleLLM()
+                try:
+                    corrected = llm.call(transcript)
+                    corrected_path.write_text(corrected, encoding="utf-8")
+                    console.print(
+                        "[green]LLM post-processing complete. Corrected transcript ready.[/green]"
+                    )
+                    logger.info(
+                        "LLM post-processing complete. Corrected transcript ready."
+                    )
+                    subtitles = "## Whisper Transcript (Corrected)\n" + corrected
+                except Exception as e:
+                    logger.debug(f"LLM post-processing failed: {e}")
+                    corrected_path.write_text(transcript, encoding="utf-8")
+                    console.print(
+                        "[yellow]LLM post-processing failed. Using raw Whisper transcript.[/yellow]"
+                    )
+                    subtitles = "## Whisper Transcript\n" + transcript
+                # Clean up temp audio
+                audio_path.unlink(missing_ok=True)
 
         comments = (
             await self._format_comments(v, config.comment_limit)
