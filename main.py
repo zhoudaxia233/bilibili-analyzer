@@ -236,6 +236,7 @@ async def main():
         if args.user:
             # Handle user videos
             uid = int(args.identifier)
+            rprint(f"[cyan]Starting to fetch videos for user {uid}...[/cyan]")
             videos = await client.get_user_videos(uid)
             display_user_videos(videos)
             if videos:

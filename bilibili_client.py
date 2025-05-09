@@ -235,9 +235,14 @@ class BilibiliClient:
         all_videos = []
 
         # First get the first page to determine total count
+        console.print("[cyan]Fetching first page to determine total videos...[/cyan]")
         first_page = await u.get_videos(pn=1, ps=page_size)
         total_count = first_page["page"]["count"]
         total_pages = math.ceil(total_count / page_size)
+
+        console.print(
+            f"[cyan]Found {total_count} videos across {total_pages} pages[/cyan]"
+        )
 
         # Add videos from first page
         all_videos.extend(
@@ -261,26 +266,34 @@ class BilibiliClient:
         )
 
         # Fetch remaining pages
-        for page_num in range(2, total_pages + 1):
-            videos_page = await u.get_videos(pn=page_num, ps=page_size)
-            page_videos = [
-                VideoInfo(
-                    bvid=item["bvid"],
-                    title=item["title"],
-                    description=item["description"],
-                    duration=self._parse_duration(item["length"]),
-                    view_count=item["play"],
-                    like_count=item.get("like", 0),
-                    coin_count=item.get("coin", 0),
-                    favorite_count=item.get("favorite", 0),
-                    share_count=item.get("share", 0),
-                    upload_time=self._format_timestamp(item["created"]),
-                    owner_name=item["author"],
-                    owner_mid=uid,
-                )
-                for item in videos_page["list"]["vlist"]
-            ]
-            all_videos.extend(page_videos)
+        if total_pages > 1:
+            with console.status(
+                f"[bold green]Fetching remaining {total_pages-1} pages of videos...[/bold green]",
+                spinner="dots",
+            ) as status:
+                for page_num in range(2, total_pages + 1):
+                    status.update(
+                        f"[bold green]Fetching page {page_num}/{total_pages}...[/bold green]"
+                    )
+                    videos_page = await u.get_videos(pn=page_num, ps=page_size)
+                    page_videos = [
+                        VideoInfo(
+                            bvid=item["bvid"],
+                            title=item["title"],
+                            description=item["description"],
+                            duration=self._parse_duration(item["length"]),
+                            view_count=item["play"],
+                            like_count=item.get("like", 0),
+                            coin_count=item.get("coin", 0),
+                            favorite_count=item.get("favorite", 0),
+                            share_count=item.get("share", 0),
+                            upload_time=self._format_timestamp(item["created"]),
+                            owner_name=item["author"],
+                            owner_mid=uid,
+                        )
+                        for item in videos_page["list"]["vlist"]
+                    ]
+                    all_videos.extend(page_videos)
 
         return all_videos
 
