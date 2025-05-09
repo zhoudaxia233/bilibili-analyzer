@@ -68,7 +68,7 @@ def display_video_info(video: VideoInfo):
 def display_user_videos(videos: list[VideoInfo]):
     """Display a list of videos in a formatted table"""
     console = Console()
-    table = Table(title="User Videos")
+    table = Table(title=f"User Videos (Total: {len(videos)})")
 
     table.add_column("BVID", style="cyan")
     table.add_column("Title", style="green")
@@ -238,6 +238,10 @@ async def main():
             uid = int(args.identifier)
             videos = await client.get_user_videos(uid)
             display_user_videos(videos)
+            if videos:
+                rprint(f"[green]Retrieved {len(videos)} videos from user {uid}[/green]")
+            else:
+                rprint("[yellow]No videos found for this user[/yellow]")
         elif args.text:
             # Handle text content
             config = VideoTextConfig(

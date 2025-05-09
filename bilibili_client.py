@@ -1,5 +1,6 @@
 from typing import List, Optional
 import os
+import math
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
@@ -220,27 +221,68 @@ class BilibiliClient:
     async def get_user_videos(
         self, uid: int, page: int = 1, page_size: int = 30
     ) -> List[VideoInfo]:
-        """Get all videos from a user"""
-        u = user.User(uid)
-        videos = await u.get_videos(pn=page, ps=page_size)
+        """Get all videos from a user
 
-        return [
-            VideoInfo(
-                bvid=item["bvid"],
-                title=item["title"],
-                description=item["description"],
-                duration=self._parse_duration(item["length"]),
-                view_count=item["play"],
-                like_count=item.get("like", 0),
-                coin_count=item.get("coin", 0),
-                favorite_count=item.get("favorite", 0),
-                share_count=item.get("share", 0),
-                upload_time=self._format_timestamp(item["created"]),
-                owner_name=item["author"],
-                owner_mid=uid,
-            )
-            for item in videos["list"]["vlist"]
-        ]
+        Args:
+            uid: User ID
+            page: Starting page number (default: 1)
+            page_size: Number of videos per page (default: 30)
+
+        Returns:
+            List of VideoInfo objects containing all user videos
+        """
+        u = user.User(uid)
+        all_videos = []
+
+        # First get the first page to determine total count
+        first_page = await u.get_videos(pn=1, ps=page_size)
+        total_count = first_page["page"]["count"]
+        total_pages = math.ceil(total_count / page_size)
+
+        # Add videos from first page
+        all_videos.extend(
+            [
+                VideoInfo(
+                    bvid=item["bvid"],
+                    title=item["title"],
+                    description=item["description"],
+                    duration=self._parse_duration(item["length"]),
+                    view_count=item["play"],
+                    like_count=item.get("like", 0),
+                    coin_count=item.get("coin", 0),
+                    favorite_count=item.get("favorite", 0),
+                    share_count=item.get("share", 0),
+                    upload_time=self._format_timestamp(item["created"]),
+                    owner_name=item["author"],
+                    owner_mid=uid,
+                )
+                for item in first_page["list"]["vlist"]
+            ]
+        )
+
+        # Fetch remaining pages
+        for page_num in range(2, total_pages + 1):
+            videos_page = await u.get_videos(pn=page_num, ps=page_size)
+            page_videos = [
+                VideoInfo(
+                    bvid=item["bvid"],
+                    title=item["title"],
+                    description=item["description"],
+                    duration=self._parse_duration(item["length"]),
+                    view_count=item["play"],
+                    like_count=item.get("like", 0),
+                    coin_count=item.get("coin", 0),
+                    favorite_count=item.get("favorite", 0),
+                    share_count=item.get("share", 0),
+                    upload_time=self._format_timestamp(item["created"]),
+                    owner_name=item["author"],
+                    owner_mid=uid,
+                )
+                for item in videos_page["list"]["vlist"]
+            ]
+            all_videos.extend(page_videos)
+
+        return all_videos
 
     async def _format_basic_info(self, info: dict) -> str:
         """Format basic video information as markdown"""
