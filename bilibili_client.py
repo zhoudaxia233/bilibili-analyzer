@@ -445,8 +445,8 @@ class BilibiliClient:
             base_dir = Path("video_texts") / bvid
             base_dir.mkdir(parents=True, exist_ok=True)
             audio_path = base_dir / "temp_audio.m4a"
-            transcript_path = base_dir / "whisper_transcript.txt"
-            corrected_path = base_dir / "whisper_transcript_corrected.txt"
+            transcript_path = base_dir / "subtitles_raw.txt"
+            corrected_path = base_dir / "subtitles.txt"
 
             # If both transcript and corrected transcript exist and are non-empty, skip extraction and correction
             if (
@@ -530,7 +530,7 @@ class BilibiliClient:
 
                     # Save key corrections if available
                     if key_corrections:
-                        (base_dir / "whisper_transcript_corrections.txt").write_text(
+                        (base_dir / "subtitles_corrections.txt").write_text(
                             key_corrections, encoding="utf-8"
                         )
 
