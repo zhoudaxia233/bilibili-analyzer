@@ -17,7 +17,8 @@ dependencies = [
     "aiohttp (>=3.11.18,<4.0.0)",
     "browsercookie (>=0.8.1,<0.9.0)",
     "yt-dlp (>=2025.4.30,<2026.0.0)",
-    "openai-whisper (>=20240930,<20240931)"
+    "openai-whisper (>=20240930,<20240931)",
+    "openai (>=1.78.0,<2.0.0)"
 ]
 
 

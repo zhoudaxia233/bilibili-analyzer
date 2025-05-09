@@ -1,12 +1,15 @@
 from typing import List, Optional
+import os
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
 import subprocess
 import logging
 import aiohttp
+import requests
 from bilibili_api import video, user, Credential
 from pydantic import BaseModel, Field
+import openai
 
 logger = logging.getLogger("bilibili_client")
 
@@ -75,6 +78,63 @@ class VideoTextContent(BaseModel):
             sections.append(self.comments)
 
         return "\n\n".join(sections)
+
+
+class SimpleLLM:
+    """
+    Unified LLM client supporting OpenAI-compatible APIs and local endpoints.
+    Reads config from environment variables:
+      - LLM_MODEL: '<provider>:<model_name>' (e.g., 'openai:gpt-4.1-nano', 'deepseek:deepseek-chat', 'ollama:gemma3:4b')
+      - LLM_API_KEY: API key for OpenAI/DeepSeek (ignored for local)
+      - LLM_BASE_URL: Base URL for API (e.g., https://api.deepseek.com or http://localhost:11434)
+    """
+
+    def __init__(self):
+        model_env = os.getenv("LLM_MODEL", "openai:gpt-4.1-nano")
+        if ":" in model_env:
+            self.provider, self.model = model_env.split(":", 1)
+        else:
+            self.provider, self.model = "openai", model_env
+        self.api_key = os.getenv("LLM_API_KEY")
+        self.base_url = os.getenv("LLM_BASE_URL")
+        self.client = None
+        # Initialize client for OpenAI/DeepSeek
+        if self.provider in {"openai", "deepseek"}:
+            if self.api_key is None:
+                raise ValueError(f"{self.provider.upper()}: LLM_API_KEY is required.")
+            if self.base_url:
+                self.client = openai.OpenAI(
+                    api_key=self.api_key, base_url=self.base_url
+                )
+            else:
+                self.client = openai.OpenAI(api_key=self.api_key)
+
+    def call(self, text):
+        system_prompt = (
+            "You are an expert in correcting automatic speech recognition (ASR) transcripts. "
+            "Only fix obvious recognition errors, such as misspelled named entities, common words, or phrases, based on context and general knowledge. "
+            "Do not change the sentence structure, style, or meaning. Do not polish or rewrite the text. "
+            "The transcript may contain both Chinese and English."
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ]
+        match self.provider:
+            case "openai" | "deepseek":
+                response = self.client.chat.completions.create(
+                    model=self.model, messages=messages, stream=False
+                )
+                return response.choices[0].message.content
+            case "ollama":
+                if not self.base_url:
+                    raise ValueError("OLLAMA: LLM_BASE_URL is required.")
+                url = self.base_url.rstrip("/") + "/api/chat"
+                data = {"model": self.model, "messages": messages}
+                resp = requests.post(url, json=data, timeout=60)
+                return resp.json()["message"]["content"]
+            case _:
+                raise ValueError(f"Unknown LLM provider: {self.provider}")
 
 
 class BilibiliClient:
@@ -412,7 +472,14 @@ class BilibiliClient:
                 if generated_txt != transcript_path:
                     generated_txt.rename(transcript_path)
                 transcript = transcript_path.read_text(encoding="utf-8")
-                subtitles = "## Whisper Transcript\n" + transcript
+                # LLM post-processing (all config from env)
+                llm = SimpleLLM()
+                try:
+                    corrected = llm.call(transcript)
+                    subtitles = "## Whisper Transcript (Corrected)\n" + corrected
+                except Exception as e:
+                    logger.debug(f"LLM post-processing failed: {e}")
+                    subtitles = "## Whisper Transcript\n" + transcript
                 # Clean up temp audio
                 audio_path.unlink(missing_ok=True)
             else:
