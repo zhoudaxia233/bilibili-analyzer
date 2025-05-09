@@ -503,7 +503,14 @@ class BilibiliClient:
                 llm = SimpleLLM()
                 try:
                     # Get both corrected transcript and key corrections in one call
-                    full_response = llm.call(transcript)
+                    console.print(
+                        f"[cyan]Preparing to process transcript with {llm.provider}:{llm.model}...[/cyan]"
+                    )
+                    with console.status(
+                        "[bold green]Running LLM post-processing (this may take a while)...[/bold green]",
+                        spinner="dots",
+                    ):
+                        full_response = llm.call(transcript)
 
                     # Extract sections using the markers
                     corrected_transcript = ""
