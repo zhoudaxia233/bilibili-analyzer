@@ -59,6 +59,78 @@ This will download the best available audio stream for the given video URL or BV
 **Note:**
 - [ffmpeg](https://ffmpeg.org/) must be installed and available in your system PATH for audio extraction to work.
 
+## New Feature: Subtitle Downloading with yt-dlp
+
+You can now download subtitles from Bilibili videos using yt-dlp integration. This feature can help extract AI-generated subtitles and other subtitle tracks available for the video.
+
+### Usage Examples
+
+**Download subtitles with authentication:**
+```bash
+python main.py BV1xx411c7mD --subtitles --use-cookies
+```
+
+**Download subtitles directly using browser cookies (recommended):**
+```bash
+python main.py BV1xx411c7mD --subtitles --browser chrome
+```
+
+**Download both audio and subtitles:**
+```bash
+python main.py https://www.bilibili.com/video/BV1xx411c7mD --download-all --use-cookies
+```
+
+**Skip video/audio download and only get subtitles:**
+```bash
+python main.py BV1xx411c7mD --download-all --browser chrome --skip-download
+```
+
+### Command Line Arguments
+
+- `--subtitles`: Download available subtitles for the video
+- `--download-all`: Download both audio and subtitles
+- `--use-cookies`: Utilize your Bilibili credentials when downloading (required for premium content and some subtitles)
+- `--browser {chrome,firefox}`: Extract cookies directly from your browser (alternative to --use-cookies)
+- `--skip-download`: Skip downloading actual media files (for subtitle-only downloads)
+
+### Authentication
+
+There are multiple ways to authenticate for accessing subtitles:
+
+1. **Direct browser cookie extraction (recommended):**
+   ```bash
+   python main.py BV1xx411c7mD --subtitles --browser chrome
+   ```
+   This extracts cookies directly from your browser, which works best for subtitles.
+
+2. Using the `extract_cookies.py` script to extract cookies first:
+   ```bash
+   python extract_cookies.py
+   python main.py BV1xx411c7mD --subtitles --use-cookies
+   ```
+
+3. Providing credentials directly via command line arguments:
+   ```bash
+   python main.py BV1xx411c7mD --subtitles --use-cookies --sessdata "your_sessdata" --bili-jct "your_bili_jct" --buvid3 "your_buvid3"
+   ```
+
+4. Adding credentials to a `.env` file in the project directory:
+   ```
+   BILIBILI_SESSDATA=your_sessdata
+   BILIBILI_BILI_JCT=your_bili_jct
+   BILIBILI_BUVID3=your_buvid3
+   ```
+
+### Note About Subtitle Formats
+
+Bilibili provides several types of subtitles:
+
+1. **Danmaku**: These are scrolling comments, not traditional subtitles. They are saved in XML format.
+2. **AI Subtitles**: Machine-generated subtitles that may be available for some videos.
+3. **Manual Subtitles**: User-provided subtitle tracks.
+
+Not all videos have all types of subtitles, and some require authentication to access.
+
 ## Output
 
 The tool will display the information in a nicely formatted table, including:
