@@ -521,10 +521,12 @@ class BilibiliClient:
                 )
                 logger.info("No subtitles found. Starting Whisper audio extraction...")
                 # Download audio
-                from main import ensure_bilibili_url, download_audio
+                from main import ensure_bilibili_url, download_with_ytdlp
 
                 url = ensure_bilibili_url(identifier)
-                download_audio(url, output_path=str(audio_path))
+                download_with_ytdlp(
+                    url=url, output_path=str(audio_path), download_type="audio"
+                )
                 console.print(
                     f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
                 )
