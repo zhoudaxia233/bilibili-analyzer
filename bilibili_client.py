@@ -495,135 +495,244 @@ class BilibiliClient:
 
         subtitles = None
         if config.include_subtitles:
+            # Step 1: Try to get subtitles via API first
             try:
+                logger.debug("Trying to get subtitles via Bilibili API...")
+                console.print(
+                    "[cyan]Trying to get subtitles via Bilibili API...[/cyan]"
+                )
                 subtitles = await self._format_subtitles(
                     v, info["cid"], config.subtitle_markdown
                 )
-            except Exception as e:
-                logger.debug(f"Error getting subtitles: {str(e)}")
-
-        # Whisper fallback if no subtitles
-        if config.include_subtitles and not subtitles:
-            base_dir = Path("video_texts") / bvid
-            base_dir.mkdir(parents=True, exist_ok=True)
-            audio_path = base_dir / "temp_audio.m4a"
-            transcript_path = base_dir / "subtitles_raw.txt"
-            corrected_path = base_dir / "subtitles.txt"
-
-            # If both transcript and corrected transcript exist and are non-empty, skip extraction and correction
-            if (
-                transcript_path.exists()
-                and corrected_path.exists()
-                and transcript_path.stat().st_size > 0
-                and corrected_path.stat().st_size > 0
-            ):
-                console.print(
-                    f"[yellow]Transcript and corrected transcript already exist. Skipping Whisper and LLM post-processing.[/yellow]"
-                )
-                corrected = corrected_path.read_text(encoding="utf-8")
-                subtitles = "## Whisper Transcript (Corrected)\n" + corrected
-            else:
-                console.print(
-                    "[cyan]No subtitles found. Starting Whisper audio extraction...[/cyan]"
-                )
-                logger.info("No subtitles found. Starting Whisper audio extraction...")
-                # Download audio
-                url = ensure_bilibili_url(identifier)
-                download_with_ytdlp(
-                    url=url,
-                    output_path=str(audio_path),
-                    download_type="audio",
-                    browser=browser,  # Pass browser for authentication
-                )
-                console.print(
-                    f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
-                )
-                logger.info(
-                    f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
-                )
-                # Run Whisper
-                cmd = [
-                    "whisper",
-                    str(audio_path),
-                    "--model",
-                    "turbo",
-                    "--output_format",
-                    "txt",
-                    "--output_dir",
-                    str(base_dir),
-                ]
-                subprocess.run(cmd, check=True)
-                # Move/rename output if needed
-                generated_txt = base_dir / (audio_path.stem + ".txt")
-                if generated_txt != transcript_path:
-                    generated_txt.rename(transcript_path)
-                console.print(
-                    f"[cyan]Whisper transcript generated at {transcript_path}. Starting LLM post-processing...[/cyan]"
-                )
-                logger.info(
-                    f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
-                )
-                transcript = transcript_path.read_text(encoding="utf-8")
-                # LLM post-processing (all config from env)
-                llm = SimpleLLM()
-                try:
-                    # Get both corrected transcript and key corrections in one call
+                if subtitles:
+                    logger.debug("Successfully retrieved subtitles via Bilibili API")
                     console.print(
-                        f"[cyan]Preparing to process transcript with {llm.provider}:{llm.model}...[/cyan]"
+                        "[green]Successfully retrieved subtitles via Bilibili API[/green]"
                     )
-                    with console.status(
-                        "[bold green]Running LLM post-processing (this may take a while)...[/bold green]",
-                        spinner="dots",
-                    ):
-                        full_response = llm.call(transcript)
+            except Exception as e:
+                logger.debug(f"Error getting subtitles via API: {str(e)}")
+                console.print(
+                    f"[yellow]API subtitle extraction failed: {str(e)}[/yellow]"
+                )
 
-                    # Extract sections using the markers
-                    corrected_transcript = ""
-                    key_corrections = ""
+            # Step 2: If API fails, try to get subtitles via yt-dlp
+            if not subtitles:
+                try:
+                    logger.debug("Trying to get subtitles via yt-dlp...")
+                    console.print(
+                        "[cyan]API subtitle extraction failed. Trying yt-dlp...[/cyan]"
+                    )
 
-                    # Split the response into sections
-                    if (
-                        "CORRECTED_TRANSCRIPT:" in full_response
-                        and "KEY_CORRECTIONS:" in full_response
-                    ):
-                        parts = full_response.split("CORRECTED_TRANSCRIPT:", 1)[1]
-                        if "KEY_CORRECTIONS:" in parts:
-                            corrected_transcript, key_corrections = parts.split(
-                                "KEY_CORRECTIONS:", 1
-                            )
-                            corrected_transcript = corrected_transcript.strip()
-                            key_corrections = key_corrections.strip()
-                    else:
-                        # Fallback if the LLM didn't follow the format
-                        corrected_transcript = full_response
+                    # Create directory for subtitles
+                    base_dir = Path("video_texts") / bvid
+                    base_dir.mkdir(parents=True, exist_ok=True)
 
-                    # Save corrected transcript
-                    corrected_path.write_text(corrected_transcript, encoding="utf-8")
+                    # Use yt-dlp to download subtitles
+                    url = ensure_bilibili_url(identifier)
 
-                    # Save key corrections if available
-                    if key_corrections:
-                        (base_dir / "subtitles_corrections.txt").write_text(
-                            key_corrections, encoding="utf-8"
+                    # Check if we can find existing subtitles first
+                    subtitle_files = list(base_dir.glob("*.vtt")) + list(
+                        base_dir.glob("*.srt")
+                    )
+                    if subtitle_files:
+                        logger.debug(f"Found existing subtitle files: {subtitle_files}")
+                        console.print(
+                            f"[green]Found existing subtitle files: {', '.join(str(f.name) for f in subtitle_files)}[/green]"
                         )
 
-                    console.print(
-                        "[green]LLM post-processing complete. Corrected transcript ready.[/green]"
-                    )
-                    logger.info(
-                        "LLM post-processing complete. Corrected transcript ready."
-                    )
-                    subtitles = (
-                        "## Whisper Transcript (Corrected)\n" + corrected_transcript
-                    )
+                        # Load the first subtitle file
+                        subtitle_content = subtitle_files[0].read_text(encoding="utf-8")
+
+                        # Format subtitle content
+                        if config.subtitle_markdown:
+                            subtitles = (
+                                "## Video Subtitles (yt-dlp)\n" + subtitle_content
+                            )
+                        else:
+                            subtitles = "Video Subtitles (yt-dlp)\n" + subtitle_content
+                    else:
+                        # Download subtitles with yt-dlp
+                        console.print(
+                            "[cyan]Downloading subtitles with yt-dlp...[/cyan]"
+                        )
+                        download_with_ytdlp(
+                            url=url,
+                            output_path=str(base_dir / bvid),
+                            download_type="subtitles",
+                            browser=browser,
+                        )
+
+                        # Check if subtitles were downloaded
+                        subtitle_files = list(base_dir.glob("*.vtt")) + list(
+                            base_dir.glob("*.srt")
+                        )
+                        if subtitle_files:
+                            logger.debug(
+                                f"Downloaded subtitle files with yt-dlp: {subtitle_files}"
+                            )
+                            console.print(
+                                f"[green]Successfully downloaded subtitle files with yt-dlp: {', '.join(str(f.name) for f in subtitle_files)}[/green]"
+                            )
+
+                            # Load the first subtitle file
+                            subtitle_content = subtitle_files[0].read_text(
+                                encoding="utf-8"
+                            )
+
+                            # Format subtitle content
+                            if config.subtitle_markdown:
+                                subtitles = (
+                                    "## Video Subtitles (yt-dlp)\n" + subtitle_content
+                                )
+                            else:
+                                subtitles = (
+                                    "Video Subtitles (yt-dlp)\n" + subtitle_content
+                                )
                 except Exception as e:
-                    logger.debug(f"LLM post-processing failed: {e}")
-                    corrected_path.write_text(transcript, encoding="utf-8")
+                    logger.debug(f"Error getting subtitles via yt-dlp: {str(e)}")
                     console.print(
-                        "[yellow]LLM post-processing failed. Using raw Whisper transcript.[/yellow]"
+                        f"[yellow]yt-dlp subtitle extraction failed: {str(e)}[/yellow]"
                     )
-                    subtitles = "## Whisper Transcript\n" + transcript
-                # Clean up temp audio
-                audio_path.unlink(missing_ok=True)
+
+            # Step 3: Whisper fallback if both API and yt-dlp fail
+            if not subtitles:
+                try:
+                    base_dir = Path("video_texts") / bvid
+                    base_dir.mkdir(parents=True, exist_ok=True)
+                    audio_path = base_dir / "temp_audio.m4a"
+                    transcript_path = base_dir / "subtitles_raw.txt"
+                    corrected_path = base_dir / "subtitles.txt"
+
+                    # If both transcript and corrected transcript exist and are non-empty, skip extraction and correction
+                    if (
+                        transcript_path.exists()
+                        and corrected_path.exists()
+                        and transcript_path.stat().st_size > 0
+                        and corrected_path.stat().st_size > 0
+                    ):
+                        console.print(
+                            f"[yellow]Transcript and corrected transcript already exist. Using existing Whisper transcript.[/yellow]"
+                        )
+                        corrected = corrected_path.read_text(encoding="utf-8")
+                        subtitles = "## Whisper Transcript (Corrected)\n" + corrected
+                    else:
+                        console.print(
+                            "[cyan]Both API and yt-dlp failed to get subtitles. Falling back to Whisper audio transcription...[/cyan]"
+                        )
+                        logger.info("Falling back to Whisper audio transcription...")
+                        # Download audio
+                        url = ensure_bilibili_url(identifier)
+                        download_with_ytdlp(
+                            url=url,
+                            output_path=str(audio_path),
+                            download_type="audio",
+                            browser=browser,  # Pass browser for authentication
+                        )
+                        console.print(
+                            f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
+                        )
+                        logger.info(
+                            f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
+                        )
+                        # Run Whisper
+                        cmd = [
+                            "whisper",
+                            str(audio_path),
+                            "--model",
+                            "turbo",
+                            "--output_format",
+                            "txt",
+                            "--output_dir",
+                            str(base_dir),
+                        ]
+                        subprocess.run(cmd, check=True)
+                        # Move/rename output if needed
+                        generated_txt = base_dir / (audio_path.stem + ".txt")
+                        if generated_txt != transcript_path:
+                            generated_txt.rename(transcript_path)
+                        console.print(
+                            f"[cyan]Whisper transcript generated at {transcript_path}. Starting LLM post-processing...[/cyan]"
+                        )
+                        logger.info(
+                            f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
+                        )
+                        transcript = transcript_path.read_text(encoding="utf-8")
+                        # LLM post-processing (all config from env)
+                        llm = SimpleLLM()
+                        try:
+                            # Get both corrected transcript and key corrections in one call
+                            console.print(
+                                f"[cyan]Preparing to process transcript with {llm.provider}:{llm.model}...[/cyan]"
+                            )
+                            with console.status(
+                                "[bold green]Running LLM post-processing (this may take a while)...[/bold green]",
+                                spinner="dots",
+                            ):
+                                full_response = llm.call(transcript)
+
+                            # Extract sections using the markers
+                            corrected_transcript = ""
+                            key_corrections = ""
+
+                            # Split the response into sections
+                            if (
+                                "CORRECTED_TRANSCRIPT:" in full_response
+                                and "KEY_CORRECTIONS:" in full_response
+                            ):
+                                parts = full_response.split("CORRECTED_TRANSCRIPT:", 1)[
+                                    1
+                                ]
+                                if "KEY_CORRECTIONS:" in parts:
+                                    corrected_transcript, key_corrections = parts.split(
+                                        "KEY_CORRECTIONS:", 1
+                                    )
+                                    corrected_transcript = corrected_transcript.strip()
+                                    key_corrections = key_corrections.strip()
+                            else:
+                                # Fallback if the LLM didn't follow the format
+                                corrected_transcript = full_response
+
+                            # Save corrected transcript
+                            corrected_path.write_text(
+                                corrected_transcript, encoding="utf-8"
+                            )
+
+                            # Save key corrections if available
+                            if key_corrections:
+                                (base_dir / "subtitles_corrections.txt").write_text(
+                                    key_corrections, encoding="utf-8"
+                                )
+
+                            console.print(
+                                "[green]LLM post-processing complete. Corrected transcript ready.[/green]"
+                            )
+                            logger.info(
+                                "LLM post-processing complete. Corrected transcript ready."
+                            )
+                            subtitles = (
+                                "## Whisper Transcript (Corrected)\n"
+                                + corrected_transcript
+                            )
+                        except Exception as e:
+                            logger.debug(f"LLM post-processing failed: {e}")
+                            corrected_path.write_text(transcript, encoding="utf-8")
+                            console.print(
+                                "[yellow]LLM post-processing failed. Using raw Whisper transcript.[/yellow]"
+                            )
+                            subtitles = "## Whisper Transcript\n" + transcript
+                        # Clean up temp audio
+                        audio_path.unlink(missing_ok=True)
+                except Exception as e:
+                    logger.debug(f"Whisper transcription failed: {str(e)}")
+                    console.print(f"[red]Whisper transcription failed: {str(e)}[/red]")
+                    if not browser:
+                        raise Exception(
+                            f"All subtitle extraction methods failed. Try using --browser option for authentication. Error: {str(e)}"
+                        )
+                    else:
+                        raise Exception(
+                            f"All subtitle extraction methods failed despite authentication. Error: {str(e)}"
+                        )
 
         comments = (
             await self._format_comments(v, config.comment_limit)

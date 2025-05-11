@@ -125,7 +125,7 @@ async def main():
     parser.add_argument(
         "--text",
         action="store_true",
-        help="Get video text content in markdown format",
+        help="Get video text content including subtitles in markdown format",
     )
     parser.add_argument(
         "--content",
@@ -160,16 +160,6 @@ async def main():
         action="store_true",
         help="Enable debug logging output",
     )
-    parser.add_argument(
-        "--subtitles",
-        action="store_true",
-        help="Download video subtitles using yt-dlp (skips media download by default)",
-    )
-    parser.add_argument(
-        "--download-audio",
-        action="store_true",
-        help="Also download audio when fetching subtitles (for fallback transcription)",
-    )
 
     args = parser.parse_args()
 
@@ -179,38 +169,6 @@ async def main():
 
     # Load credentials from .env
     credentials = load_credentials()
-
-    # Handle download requests - simplified for subtitle focus
-    if args.subtitles:
-        try:
-            url = ensure_bilibili_url(args.identifier)
-
-            # If download-audio is specified, get both; otherwise just subtitles
-            download_type = "all" if args.download_audio else "subtitles"
-
-            # Always skip actual video download when getting subtitles
-            if download_type == "subtitles":
-                rprint("[cyan]Downloading subtitles only (skipping media files)[/cyan]")
-            else:
-                rprint(
-                    "[cyan]Downloading subtitles and audio for transcription fallback[/cyan]"
-                )
-
-            # Determine authentication method
-            browser = args.browser
-
-            download_with_ytdlp(
-                url=url,
-                output_path=args.output,
-                download_type=download_type,
-                credentials=None,  # Only use browser cookies
-                browser=browser,
-            )
-
-            return
-        except Exception as e:
-            rprint(f"[red]Download failed: {e}[/red]")
-            return
 
     # Initialize client with credentials
     client = BilibiliClient(**credentials)
@@ -239,24 +197,24 @@ async def main():
                 subtitle_markdown=args.format == "markdown",
             )
 
-            # Pass browser information to client for whisper fallback
-            # This is important for downloading audio that requires authentication
+            # Try to get video text content with subtitles using all available methods
             try:
+                rprint(
+                    "[cyan]Getting video text content (using API → yt-dlp → Whisper fallback path)...[/cyan]"
+                )
                 content = await client.get_video_text_content(
-                    args.identifier,
-                    config,
-                    browser=args.browser,  # Pass browser info for whisper fallback
+                    args.identifier, config, browser=args.browser
                 )
                 save_content(content.to_markdown(), args.output)
             except Exception as e:
-                if "download failed" in str(e).lower() and not args.browser:
+                if "authentication" in str(e).lower() and not args.browser:
                     rprint(
-                        "[red]Error: Audio download failed. Try using --browser option for authentication:[/red]"
+                        "[red]Error: Subtitle extraction failed. Try using --browser option for authentication:[/red]"
                     )
                     rprint(
                         "[yellow]Example: python main.py BV1xx411c7mD --text --browser chrome[/yellow]"
                     )
-                raise
+                rprint(f"[red]Error:[/red] {str(e)}")
         else:
             # Handle single video
             video = await client.get_video_info(args.identifier)

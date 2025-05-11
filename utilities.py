@@ -42,7 +42,7 @@ def download_with_ytdlp(
     if download_type in ["subtitles", "all"]:
         cmd.extend(["--write-subs", "--write-auto-subs", "--sub-langs", "all"])
 
-    # Handle authentication - simplified to only use browser cookies
+    # Handle authentication - use browser cookies when available
     if browser:
         # Use browser cookies directly (preferred method)
         cmd.extend(["--cookies-from-browser", browser])
@@ -65,7 +65,24 @@ def download_with_ytdlp(
     try:
         rprint(f"[cyan]Running yt-dlp command: {' '.join(cmd)}[/cyan]")
         subprocess.run(cmd, check=True)
-        rprint(f"[green]{download_type.capitalize()} download complete.[/green]")
+
+        # Provide more specific success message based on download type
+        if download_type == "subtitles":
+            rprint(f"[green]Subtitle download complete.[/green]")
+        elif download_type == "audio":
+            rprint(f"[green]Audio download complete.[/green]")
+        else:
+            rprint(f"[green]All requested content download complete.[/green]")
     except subprocess.CalledProcessError as e:
-        rprint(f"[red]yt-dlp download failed with error code {e.returncode}[/red]")
+        # Provide more context in error messages to help debugging
+        if download_type == "subtitles" and not browser:
+            rprint(
+                f"[red]yt-dlp subtitle download failed. You might need authentication with --browser.[/red]"
+            )
+        elif download_type == "audio" and not browser:
+            rprint(
+                f"[red]yt-dlp audio download failed. You might need authentication with --browser.[/red]"
+            )
+        else:
+            rprint(f"[red]yt-dlp download failed with error code {e.returncode}[/red]")
         raise
