@@ -458,13 +458,17 @@ class BilibiliClient:
             return None
 
     async def get_video_text_content(
-        self, identifier: str, config: Optional[VideoTextConfig] = None
+        self,
+        identifier: str,
+        config: Optional[VideoTextConfig] = None,
+        browser: Optional[str] = None,
     ) -> VideoTextContent:
         """Get video text content in markdown format
 
         Args:
             identifier: A Bilibili video URL or BVID
             config: Configuration for text content extraction
+            browser: Browser to extract cookies from for authentication (e.g., 'chrome', 'firefox')
 
         Returns:
             VideoTextContent object containing markdown formatted text
@@ -526,7 +530,10 @@ class BilibiliClient:
                 # Download audio
                 url = ensure_bilibili_url(identifier)
                 download_with_ytdlp(
-                    url=url, output_path=str(audio_path), download_type="audio"
+                    url=url,
+                    output_path=str(audio_path),
+                    download_type="audio",
+                    browser=browser,  # Pass browser for authentication
                 )
                 console.print(
                     f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"

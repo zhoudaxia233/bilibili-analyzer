@@ -128,30 +128,21 @@ async def main():
         help="Get video text content in markdown format",
     )
     parser.add_argument(
-        "--no-subtitles",
-        action="store_true",
-        help="Don't include subtitles in text content",
+        "--content",
+        help="Comma-separated list of content to include (subtitles,comments,uploader)",
+        default="subtitles,comments,uploader",
     )
     parser.add_argument(
-        "--no-comments",
-        action="store_true",
-        help="Don't include comments in text content",
-    )
-    parser.add_argument(
-        "--no-uploader",
-        action="store_true",
-        help="Don't include detailed uploader info in text content",
+        "--format",
+        help="Format for subtitles (plain or markdown)",
+        choices=["plain", "markdown"],
+        default="plain",
     )
     parser.add_argument(
         "--comment-limit",
         type=int,
         default=10,
         help="Number of top comments to include (default: 10)",
-    )
-    parser.add_argument(
-        "--subtitle-markdown",
-        action="store_true",
-        help="Format subtitles in markdown style",
     )
     parser.add_argument(
         "--output",
@@ -170,24 +161,14 @@ async def main():
         help="Enable debug logging output",
     )
     parser.add_argument(
-        "--audio",
-        action="store_true",
-        help="Download audio file of the video using yt-dlp",
-    )
-    parser.add_argument(
         "--subtitles",
         action="store_true",
-        help="Download video subtitles using yt-dlp",
+        help="Download video subtitles using yt-dlp (skips media download by default)",
     )
     parser.add_argument(
-        "--download-all",
+        "--download-audio",
         action="store_true",
-        help="Download both audio and subtitles using yt-dlp",
-    )
-    parser.add_argument(
-        "--skip-download",
-        action="store_true",
-        help="Skip downloading actual media files (for subtitle-only downloads)",
+        help="Also download audio when fetching subtitles (for fallback transcription)",
     )
 
     args = parser.parse_args()
@@ -199,34 +180,30 @@ async def main():
     # Load credentials from .env
     credentials = load_credentials()
 
-    # Handle download requests
-    if args.audio or args.subtitles or args.download_all:
+    # Handle download requests - simplified for subtitle focus
+    if args.subtitles:
         try:
             url = ensure_bilibili_url(args.identifier)
 
-            if args.download_all:
-                download_type = "all"
-            elif args.subtitles:
-                download_type = "subtitles"
-            else:
-                download_type = "audio"
+            # If download-audio is specified, get both; otherwise just subtitles
+            download_type = "all" if args.download_audio else "subtitles"
 
-            # Force skip-download if the flag is set
-            if args.skip_download and download_type != "subtitles":
-                download_type = "subtitles"  # Change to subtitles-only mode
+            # Always skip actual video download when getting subtitles
+            if download_type == "subtitles":
+                rprint("[cyan]Downloading subtitles only (skipping media files)[/cyan]")
+            else:
                 rprint(
-                    "[yellow]--skip-download flag set, only downloading subtitles[/yellow]"
+                    "[cyan]Downloading subtitles and audio for transcription fallback[/cyan]"
                 )
 
-            # Determine authentication method - simplified
+            # Determine authentication method
             browser = args.browser
-            download_credentials = None  # Only use browser cookies now
 
             download_with_ytdlp(
                 url=url,
                 output_path=args.output,
                 download_type=download_type,
-                credentials=download_credentials,
+                credentials=None,  # Only use browser cookies
                 browser=browser,
             )
 
@@ -250,16 +227,36 @@ async def main():
             else:
                 rprint("[yellow]No videos found for this user[/yellow]")
         elif args.text:
-            # Handle text content
+            # Parse content parameter
+            content_options = args.content.lower().split(",") if args.content else []
+
+            # Create config from content options
             config = VideoTextConfig(
-                include_subtitles=not args.no_subtitles,
-                include_comments=not args.no_comments,
-                include_uploader_info=not args.no_uploader,
+                include_subtitles="subtitles" in content_options,
+                include_comments="comments" in content_options,
+                include_uploader_info="uploader" in content_options,
                 comment_limit=args.comment_limit,
-                subtitle_markdown=args.subtitle_markdown,
+                subtitle_markdown=args.format == "markdown",
             )
-            content = await client.get_video_text_content(args.identifier, config)
-            save_content(content.to_markdown(), args.output)
+
+            # Pass browser information to client for whisper fallback
+            # This is important for downloading audio that requires authentication
+            try:
+                content = await client.get_video_text_content(
+                    args.identifier,
+                    config,
+                    browser=args.browser,  # Pass browser info for whisper fallback
+                )
+                save_content(content.to_markdown(), args.output)
+            except Exception as e:
+                if "download failed" in str(e).lower() and not args.browser:
+                    rprint(
+                        "[red]Error: Audio download failed. Try using --browser option for authentication:[/red]"
+                    )
+                    rprint(
+                        "[yellow]Example: python main.py BV1xx411c7mD --text --browser chrome[/yellow]"
+                    )
+                raise
         else:
             # Handle single video
             video = await client.get_video_info(args.identifier)
