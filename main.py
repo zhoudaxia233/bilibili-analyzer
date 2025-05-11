@@ -160,19 +160,9 @@ async def main():
         default=None,
     )
     parser.add_argument(
-        "--sessdata",
-        help="SESSDATA cookie value (overrides .env)",
-        default=None,
-    )
-    parser.add_argument(
-        "--bili-jct",
-        help="bili_jct cookie value (overrides .env)",
-        default=None,
-    )
-    parser.add_argument(
-        "--buvid3",
-        help="buvid3 cookie value (overrides .env)",
-        default=None,
+        "--browser",
+        choices=["chrome", "firefox"],
+        help="Browser to extract cookies from for authenticated access",
     )
     parser.add_argument(
         "--debug",
@@ -195,16 +185,6 @@ async def main():
         help="Download both audio and subtitles using yt-dlp",
     )
     parser.add_argument(
-        "--use-cookies",
-        action="store_true",
-        help="Use Bilibili cookies with yt-dlp for authenticated downloads",
-    )
-    parser.add_argument(
-        "--browser",
-        choices=["chrome", "firefox"],
-        help="Browser to extract cookies from (alternative to --use-cookies)",
-    )
-    parser.add_argument(
         "--skip-download",
         action="store_true",
         help="Skip downloading actual media files (for subtitle-only downloads)",
@@ -218,14 +198,6 @@ async def main():
 
     # Load credentials from .env
     credentials = load_credentials()
-
-    # Override with command line arguments if provided
-    if args.sessdata:
-        credentials["sessdata"] = args.sessdata
-    if args.bili_jct:
-        credentials["bili_jct"] = args.bili_jct
-    if args.buvid3:
-        credentials["buvid3"] = args.buvid3
 
     # Handle download requests
     if args.audio or args.subtitles or args.download_all:
@@ -246,9 +218,9 @@ async def main():
                     "[yellow]--skip-download flag set, only downloading subtitles[/yellow]"
                 )
 
-            # Determine authentication method
+            # Determine authentication method - simplified
             browser = args.browser
-            download_credentials = credentials if args.use_cookies else None
+            download_credentials = None  # Only use browser cookies now
 
             download_with_ytdlp(
                 url=url,
