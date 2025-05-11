@@ -1,17 +1,20 @@
 from typing import List, Optional
 import os
 import math
+import logging
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
-import subprocess
-import logging
+
 import aiohttp
 import requests
 from bilibili_api import video, user, Credential
 from pydantic import BaseModel, Field
 import openai
 from rich.console import Console
+
+from utilities import ensure_bilibili_url, download_with_ytdlp
 
 logger = logging.getLogger("bilibili_client")
 console = Console()
@@ -521,8 +524,6 @@ class BilibiliClient:
                 )
                 logger.info("No subtitles found. Starting Whisper audio extraction...")
                 # Download audio
-                from main import ensure_bilibili_url, download_with_ytdlp
-
                 url = ensure_bilibili_url(identifier)
                 download_with_ytdlp(
                     url=url, output_path=str(audio_path), download_type="audio"
