@@ -96,11 +96,25 @@ class SimpleLLM:
     """
 
     def __init__(self):
+        # Add debugging for environment variables
+        logger.debug("SimpleLLM init - Current environment variables:")
+        logger.debug(f"  Raw LLM_MODEL env: {repr(os.getenv('LLM_MODEL'))}")
+        logger.debug(f"  Raw LLM_BASE_URL env: {repr(os.getenv('LLM_BASE_URL'))}")
+        logger.debug(
+            f"  Raw LLM_API_KEY env: {repr(os.getenv('LLM_API_KEY', '[MASKED]'))}"
+        )
+
         model_env = os.getenv("LLM_MODEL", "openai:gpt-4.1-nano")
+        logger.debug(f"  Using model_env: {model_env}")
+
         if ":" in model_env:
             self.provider, self.model = model_env.split(":", 1)
+            logger.debug(f"  Split into provider={self.provider}, model={self.model}")
         else:
             self.provider, self.model = "openai", model_env
+            logger.debug(
+                f"  No ':' found, using default provider={self.provider}, model={self.model}"
+            )
         self.api_key = os.getenv("LLM_API_KEY")
         self.base_url = os.getenv("LLM_BASE_URL")
         self.client = None
@@ -140,8 +154,33 @@ class SimpleLLM:
                     raise ValueError("OLLAMA: LLM_BASE_URL is required.")
                 url = self.base_url.rstrip("/") + "/api/chat"
                 data = {"model": self.model, "messages": messages}
-                resp = requests.post(url, json=data, timeout=60)
-                return resp.json()["message"]["content"]
+                try:
+                    resp = requests.post(url, json=data, timeout=60)
+                    resp.raise_for_status()  # Raise exception for non-200 responses
+
+                    response_json = resp.json()
+                    logger.debug(f"Ollama API raw response: {resp.text[:200]}")
+
+                    # Handle various Ollama API response formats
+                    if (
+                        "message" in response_json
+                        and "content" in response_json["message"]
+                    ):
+                        return response_json["message"]["content"]
+                    elif "response" in response_json:
+                        return response_json["response"]
+                    else:
+                        logger.debug(
+                            f"Unexpected Ollama API response format: {response_json}"
+                        )
+                        return resp.text  # Return raw text as fallback
+                except requests.RequestException as e:
+                    logger.debug(f"Ollama API request error: {e}")
+                    raise ValueError(f"Ollama API error: {e}")
+                except ValueError as e:
+                    logger.debug(f"Ollama API JSON parsing error: {e}")
+                    # If JSON parsing fails, return the raw text
+                    return resp.text
             case _:
                 raise ValueError(f"Unknown LLM provider: {self.provider}")
 
@@ -779,3 +818,113 @@ class BilibiliClient:
             subtitles=subtitles,
             comments=comments,
         )
+
+    async def retry_llm_processing(self, identifier: str) -> str:
+        """Retry LLM post-processing for an existing Whisper transcript.
+
+        Args:
+            identifier: A Bilibili video URL or BVID
+
+        Returns:
+            The corrected transcript text
+
+        Raises:
+            Exception: If the transcript file does not exist or LLM processing fails
+        """
+        # Extract BVID from URL if needed
+        bvid = self._extract_bvid(identifier)
+        logger.debug(f"Retrying LLM processing for BVID: {bvid}")
+
+        # Define file paths
+        base_dir = Path("video_texts") / bvid
+        transcript_path = base_dir / "subtitles_raw.txt"
+        corrected_path = base_dir / "subtitles.txt"
+
+        # Check if transcript file exists
+        if not transcript_path.exists():
+            logger.debug(f"Transcript file not found at {transcript_path}")
+            raise Exception(
+                f"Whisper transcript file not found at {transcript_path}. Run with --text first."
+            )
+
+        # Read the transcript
+        transcript = transcript_path.read_text(encoding="utf-8")
+        if not transcript.strip():
+            logger.debug(f"Transcript file is empty at {transcript_path}")
+            raise Exception(f"Whisper transcript file is empty at {transcript_path}.")
+
+        logger.debug(f"Loaded transcript with {len(transcript)} characters")
+
+        # Create LLM instance
+        llm = SimpleLLM()
+        logger.debug(f"Initialized LLM with provider={llm.provider}, model={llm.model}")
+
+        # Run LLM post-processing
+        console.print(f"[cyan]Retrying LLM post-processing for {bvid}...[/cyan]")
+        console.print(f"[cyan]Using {llm.provider}:{llm.model}[/cyan]")
+
+        try:
+            with console.status(
+                "[bold green]Running LLM post-processing (this may take a while)...[/bold green]",
+                spinner="dots",
+            ):
+                full_response = llm.call(transcript)
+                logger.debug(
+                    f"Received LLM response with {len(full_response)} characters"
+                )
+                if len(full_response) > 200:
+                    logger.debug(f"Response preview: {full_response[:200]}...")
+        except Exception as e:
+            logger.debug(f"LLM call failed with error: {str(e)}")
+            raise
+
+        # Extract sections using the markers
+        corrected_transcript = ""
+        key_corrections = ""
+
+        # Split the response into sections
+        if (
+            "CORRECTED_TRANSCRIPT:" in full_response
+            and "KEY_CORRECTIONS:" in full_response
+        ):
+            logger.debug("Found both section markers in response")
+            parts = full_response.split("CORRECTED_TRANSCRIPT:", 1)[1]
+            if "KEY_CORRECTIONS:" in parts:
+                corrected_transcript, key_corrections = parts.split(
+                    "KEY_CORRECTIONS:", 1
+                )
+                corrected_transcript = corrected_transcript.strip()
+                key_corrections = key_corrections.strip()
+                logger.debug(
+                    f"Extracted {len(corrected_transcript)} chars of corrected transcript and {len(key_corrections)} chars of key corrections"
+                )
+        else:
+            # Fallback if the LLM didn't follow the format
+            logger.debug(
+                "Response format didn't match expected markers, using full response as transcript"
+            )
+            corrected_transcript = full_response
+
+        # Save corrected transcript
+        try:
+            corrected_path.write_text(corrected_transcript, encoding="utf-8")
+            logger.debug(f"Saved corrected transcript to {corrected_path}")
+        except Exception as e:
+            logger.debug(f"Failed to save corrected transcript: {str(e)}")
+            raise
+
+        # Save key corrections if available
+        if key_corrections:
+            try:
+                corrections_path = base_dir / "subtitles_corrections.txt"
+                corrections_path.write_text(key_corrections, encoding="utf-8")
+                logger.debug(f"Saved key corrections to {corrections_path}")
+            except Exception as e:
+                logger.debug(f"Failed to save key corrections: {str(e)}")
+                # Continue anyway since this is not critical
+
+        console.print(
+            "[green]LLM post-processing complete. Corrected transcript saved.[/green]"
+        )
+
+        return corrected_transcript

@@ -16,7 +16,7 @@ def load_credentials():
     """Load credentials from .env file and environment variables"""
     # Try to load from .env file in the current directory
     env_path = Path(".") / ".env"
-    load_dotenv(env_path)
+    load_dotenv(env_path, override=True)
 
     # Get credentials from environment variables
     credentials = {
@@ -160,6 +160,11 @@ async def main():
         action="store_true",
         help="Enable debug logging output",
     )
+    parser.add_argument(
+        "--retry-llm",
+        action="store_true",
+        help="Retry LLM post-processing for an existing whisper transcript",
+    )
 
     args = parser.parse_args()
 
@@ -174,6 +179,35 @@ async def main():
     client = BilibiliClient(**credentials)
 
     try:
+        if args.retry_llm:
+            # Check if identifier is provided
+            if not args.identifier:
+                rprint(
+                    "[red]Error: Video identifier is required for --retry-llm option[/red]"
+                )
+                return
+
+            try:
+                corrected_transcript = await client.retry_llm_processing(
+                    args.identifier
+                )
+
+                # If output file is specified, save to file; otherwise print to console
+                if args.output:
+                    with open(args.output, "w", encoding="utf-8") as f:
+                        f.write(corrected_transcript)
+                    rprint(
+                        f"[green]Corrected transcript saved to {args.output}[/green]"
+                    )
+                else:
+                    rprint("[bold]Corrected Transcript:[/bold]")
+                    console = Console()
+                    console.print(Markdown(corrected_transcript))
+
+            except Exception as e:
+                rprint(f"[red]Error during LLM post-processing: {str(e)}[/red]")
+            return
+
         if args.user:
             # Handle user videos
             uid = int(args.identifier)
