@@ -197,24 +197,50 @@ async def main():
                 subtitle_markdown=args.format == "markdown",
             )
 
+            # Check if browser is specified for authentication
+            if "subtitles" in content_options and not args.browser:
+                rprint(
+                    "[yellow]Note: Some videos require authentication to access. "
+                    "If subtitle extraction fails, try adding --browser chrome or --browser firefox[/yellow]"
+                )
+
             # Try to get video text content with subtitles using all available methods
             try:
                 rprint(
-                    "[cyan]Getting video text content (using API → yt-dlp → Whisper fallback path)...[/cyan]"
+                    "[cyan]Getting video text content (using unified subtitle extraction)...[/cyan]"
                 )
+
+                # If browser is specified, mention that cookies will be extracted once
+                if args.browser:
+                    rprint(
+                        f"[cyan]Note: Browser cookies will be extracted once and reused for all operations[/cyan]"
+                    )
+
+                # Get video text content with unified subtitle extraction
                 content = await client.get_video_text_content(
                     args.identifier, config, browser=args.browser
                 )
+
+                # Save or display the content
                 save_content(content.to_markdown(), args.output)
+
+                if args.output:
+                    rprint(
+                        f"[green]Successfully saved content to {args.output}[/green]"
+                    )
+
             except Exception as e:
-                if "authentication" in str(e).lower() and not args.browser:
+                error_msg = str(e).lower()
+                if "authentication" in error_msg and not args.browser:
                     rprint(
-                        "[red]Error: Subtitle extraction failed. Try using --browser option for authentication:[/red]"
+                        "[red]Error: This video requires authentication to access.[/red]"
                     )
+                    rprint("[yellow]Please retry with browser authentication:[/yellow]")
                     rprint(
-                        "[yellow]Example: python main.py BV1xx411c7mD --text --browser chrome[/yellow]"
+                        f"[yellow]  python main.py {args.identifier} --text --browser chrome[/yellow]"
                     )
-                rprint(f"[red]Error:[/red] {str(e)}")
+                else:
+                    rprint(f"[red]Error:[/red] {str(e)}")
         else:
             # Handle single video
             video = await client.get_video_info(args.identifier)

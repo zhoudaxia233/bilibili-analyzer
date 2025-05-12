@@ -475,6 +475,9 @@ class BilibiliClient:
         """
         config = config or VideoTextConfig()
         bvid = self._extract_bvid(identifier)
+        url = ensure_bilibili_url(identifier)  # Pre-compute URL for reuse
+        base_dir = Path("video_texts") / bvid  # Pre-compute base directory for reuse
+        base_dir.mkdir(parents=True, exist_ok=True)
 
         # Create video instance with credential if available
         v = video.Video(bvid=bvid, credential=self.credential)
@@ -517,40 +520,33 @@ class BilibiliClient:
 
             # Step 2: If API fails, try to get subtitles via yt-dlp
             if not subtitles:
-                try:
-                    logger.debug("Trying to get subtitles via yt-dlp...")
+                # First check for existing subtitle files
+                subtitle_files = list(base_dir.glob("*.vtt")) + list(
+                    base_dir.glob("*.srt")
+                )
+
+                if subtitle_files:
+                    logger.debug(f"Found existing subtitle files: {subtitle_files}")
                     console.print(
-                        "[cyan]API subtitle extraction failed. Trying yt-dlp...[/cyan]"
+                        f"[green]Found existing subtitle files: {', '.join(str(f.name) for f in subtitle_files)}[/green]"
                     )
 
-                    # Create directory for subtitles
-                    base_dir = Path("video_texts") / bvid
-                    base_dir.mkdir(parents=True, exist_ok=True)
+                    # Load the first subtitle file
+                    subtitle_content = subtitle_files[0].read_text(encoding="utf-8")
 
-                    # Use yt-dlp to download subtitles
-                    url = ensure_bilibili_url(identifier)
-
-                    # Check if we can find existing subtitles first
-                    subtitle_files = list(base_dir.glob("*.vtt")) + list(
-                        base_dir.glob("*.srt")
-                    )
-                    if subtitle_files:
-                        logger.debug(f"Found existing subtitle files: {subtitle_files}")
+                    # Format subtitle content
+                    if config.subtitle_markdown:
+                        subtitles = "## Video Subtitles (yt-dlp)\n" + subtitle_content
+                    else:
+                        subtitles = "Video Subtitles (yt-dlp)\n" + subtitle_content
+                else:
+                    # No existing subtitle files, try to download with yt-dlp
+                    try:
+                        logger.debug("Trying to get subtitles via yt-dlp...")
                         console.print(
-                            f"[green]Found existing subtitle files: {', '.join(str(f.name) for f in subtitle_files)}[/green]"
+                            "[cyan]API subtitle extraction failed. Trying yt-dlp...[/cyan]"
                         )
 
-                        # Load the first subtitle file
-                        subtitle_content = subtitle_files[0].read_text(encoding="utf-8")
-
-                        # Format subtitle content
-                        if config.subtitle_markdown:
-                            subtitles = (
-                                "## Video Subtitles (yt-dlp)\n" + subtitle_content
-                            )
-                        else:
-                            subtitles = "Video Subtitles (yt-dlp)\n" + subtitle_content
-                    else:
                         # Download subtitles with yt-dlp
                         console.print(
                             "[cyan]Downloading subtitles with yt-dlp...[/cyan]"
@@ -559,7 +555,7 @@ class BilibiliClient:
                             url=url,
                             output_path=str(base_dir / bvid),
                             download_type="subtitles",
-                            browser=browser,
+                            browser=browser,  # Browser cookie will be extracted once and cached
                         )
 
                         # Check if subtitles were downloaded
@@ -588,52 +584,65 @@ class BilibiliClient:
                                 subtitles = (
                                     "Video Subtitles (yt-dlp)\n" + subtitle_content
                                 )
-                except Exception as e:
-                    logger.debug(f"Error getting subtitles via yt-dlp: {str(e)}")
-                    console.print(
-                        f"[yellow]yt-dlp subtitle extraction failed: {str(e)}[/yellow]"
-                    )
+                        else:
+                            logger.debug(
+                                "No subtitle files found after yt-dlp download"
+                            )
+                            console.print(
+                                "[yellow]No subtitle files found after yt-dlp download[/yellow]"
+                            )
+                    except Exception as e:
+                        logger.debug(f"Error getting subtitles via yt-dlp: {str(e)}")
+                        console.print(
+                            f"[yellow]yt-dlp subtitle extraction failed: {str(e)}[/yellow]"
+                        )
 
             # Step 3: Whisper fallback if both API and yt-dlp fail
             if not subtitles:
-                try:
-                    base_dir = Path("video_texts") / bvid
-                    base_dir.mkdir(parents=True, exist_ok=True)
-                    audio_path = base_dir / "temp_audio.m4a"
-                    transcript_path = base_dir / "subtitles_raw.txt"
-                    corrected_path = base_dir / "subtitles.txt"
+                audio_path = base_dir / "temp_audio.m4a"
+                transcript_path = base_dir / "subtitles_raw.txt"
+                corrected_path = base_dir / "subtitles.txt"
 
-                    # If both transcript and corrected transcript exist and are non-empty, skip extraction and correction
-                    if (
-                        transcript_path.exists()
-                        and corrected_path.exists()
-                        and transcript_path.stat().st_size > 0
-                        and corrected_path.stat().st_size > 0
-                    ):
-                        console.print(
-                            f"[yellow]Transcript and corrected transcript already exist. Using existing Whisper transcript.[/yellow]"
-                        )
-                        corrected = corrected_path.read_text(encoding="utf-8")
-                        subtitles = "## Whisper Transcript (Corrected)\n" + corrected
-                    else:
+                # If transcripts already exist, use them
+                if (
+                    transcript_path.exists()
+                    and corrected_path.exists()
+                    and transcript_path.stat().st_size > 0
+                    and corrected_path.stat().st_size > 0
+                ):
+                    console.print(
+                        f"[yellow]Transcript and corrected transcript already exist. Using existing Whisper transcript.[/yellow]"
+                    )
+                    corrected = corrected_path.read_text(encoding="utf-8")
+                    subtitles = "## Whisper Transcript (Corrected)\n" + corrected
+                else:
+                    try:
                         console.print(
                             "[cyan]Both API and yt-dlp failed to get subtitles. Falling back to Whisper audio transcription...[/cyan]"
                         )
                         logger.info("Falling back to Whisper audio transcription...")
-                        # Download audio
-                        url = ensure_bilibili_url(identifier)
+
+                        # Download audio using same browser cookie (will be cached from previous step)
+                        console.print(
+                            f"[cyan]Downloading audio for transcription...[/cyan]"
+                        )
                         download_with_ytdlp(
                             url=url,
                             output_path=str(audio_path),
                             download_type="audio",
-                            browser=browser,  # Pass browser for authentication
+                            browser=browser,  # Browser cookie will be reused from cache
                         )
+
+                        if not audio_path.exists() or audio_path.stat().st_size == 0:
+                            raise Exception("Audio download failed or file is empty")
+
                         console.print(
                             f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
                         )
                         logger.info(
                             f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
                         )
+
                         # Run Whisper
                         cmd = [
                             "whisper",
@@ -646,10 +655,28 @@ class BilibiliClient:
                             str(base_dir),
                         ]
                         subprocess.run(cmd, check=True)
+
                         # Move/rename output if needed
                         generated_txt = base_dir / (audio_path.stem + ".txt")
                         if generated_txt != transcript_path:
-                            generated_txt.rename(transcript_path)
+                            if generated_txt.exists():
+                                generated_txt.rename(transcript_path)
+                            else:
+                                logger.debug(
+                                    f"Expected generated file {generated_txt} not found"
+                                )
+                                raise Exception(
+                                    "Whisper did not generate any transcript file"
+                                )
+
+                        if (
+                            not transcript_path.exists()
+                            or transcript_path.stat().st_size == 0
+                        ):
+                            raise Exception(
+                                "Whisper transcript generation failed or file is empty"
+                            )
+
                         console.print(
                             f"[cyan]Whisper transcript generated at {transcript_path}. Starting LLM post-processing...[/cyan]"
                         )
@@ -657,6 +684,7 @@ class BilibiliClient:
                             f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
                         )
                         transcript = transcript_path.read_text(encoding="utf-8")
+
                         # LLM post-processing (all config from env)
                         llm = SimpleLLM()
                         try:
@@ -720,19 +748,23 @@ class BilibiliClient:
                                 "[yellow]LLM post-processing failed. Using raw Whisper transcript.[/yellow]"
                             )
                             subtitles = "## Whisper Transcript\n" + transcript
+
                         # Clean up temp audio
-                        audio_path.unlink(missing_ok=True)
-                except Exception as e:
-                    logger.debug(f"Whisper transcription failed: {str(e)}")
-                    console.print(f"[red]Whisper transcription failed: {str(e)}[/red]")
-                    if not browser:
-                        raise Exception(
-                            f"All subtitle extraction methods failed. Try using --browser option for authentication. Error: {str(e)}"
+                        if audio_path.exists():
+                            audio_path.unlink(missing_ok=True)
+                    except Exception as e:
+                        logger.debug(f"Whisper transcription failed: {str(e)}")
+                        console.print(
+                            f"[red]Whisper transcription failed: {str(e)}[/red]"
                         )
-                    else:
-                        raise Exception(
-                            f"All subtitle extraction methods failed despite authentication. Error: {str(e)}"
-                        )
+                        if not browser:
+                            raise Exception(
+                                f"All subtitle extraction methods failed. Try using --browser option for authentication. Error: {str(e)}"
+                            )
+                        else:
+                            raise Exception(
+                                f"All subtitle extraction methods failed despite authentication. Error: {str(e)}"
+                            )
 
         comments = (
             await self._format_comments(v, config.comment_limit)
