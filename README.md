@@ -6,14 +6,17 @@ A Python tool to fetch video information from Bilibili using either a video URL/
 
 - Fetch detailed information about a single video using its URL or BVID
 - Fetch all videos from a user using their UID
-- Beautiful console output using rich formatting
+- Extract video subtitles using multiple methods (API, yt-dlp, Whisper AI)
+- Beautiful console output using rich formatting with progress indicators
 - Support for both bilibili.com and b23.tv URLs
 - Automatic handling of video duration and timestamp formatting
+- LLM post-processing for Whisper transcripts
 
 ## Requirements
 
 - Python >= 3.12, < 4.0
 - Poetry for dependency management
+- ffmpeg (for audio extraction)
 
 ## Installation
 
@@ -44,92 +47,118 @@ Using a user's UID:
 poetry run python main.py 123456 --user
 ```
 
-## Download Audio Only
+This will:
+- Fetch all videos uploaded by the user with the given UID
+- Display a table with video details (BVID, title, duration, view count, upload time)
+- Show the total number of videos found
 
-You can download only the audio track of a Bilibili video using the `--audio` flag. This uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) under the hood and requires [ffmpeg](https://ffmpeg.org/) to be installed on your system.
+## Extract Video Text Content
 
-### Usage
+You can extract all text content from a video, including description, subtitles, and comments.
+
+### Extract with default settings
 
 ```bash
-python main.py <video_url_or_BVID> --audio
+python main.py BV1xx411c7mD --text
 ```
 
-This will download the best available audio stream for the given video URL or BVID.
+This will attempt to extract subtitles using three methods in order:
+1. Bilibili API
+2. yt-dlp subtitle extraction
+3. Whisper AI audio transcription (if the first two methods fail)
 
-**Note:**
-- [ffmpeg](https://ffmpeg.org/) must be installed and available in your system PATH for audio extraction to work.
+### Authentication for premium content
 
-## New Feature: Subtitle Downloading with yt-dlp
+For videos that require authentication:
 
-You can now download subtitles from Bilibili videos using yt-dlp integration. This feature can help extract AI-generated subtitles and other subtitle tracks available for the video.
-
-### Usage Examples
-
-**Download subtitles with authentication:**
 ```bash
-python main.py BV1xx411c7mD --subtitles --use-cookies
+python main.py BV1xx411c7mD --text --browser chrome
 ```
 
-**Download subtitles directly using browser cookies (recommended):**
+This extracts cookies directly from your browser for authenticated access.
+
+### Control which content to include
+
 ```bash
-python main.py BV1xx411c7mD --subtitles --browser chrome
+python main.py BV1xx411c7mD --text --content subtitles,comments,uploader
 ```
 
-**Download both audio and subtitles:**
+### Format options
+
 ```bash
-python main.py https://www.bilibili.com/video/BV1xx411c7mD --download-all --use-cookies
+python main.py BV1xx411c7mD --text --format markdown
 ```
 
-**Skip video/audio download and only get subtitles:**
+### Save output to file
+
 ```bash
-python main.py BV1xx411c7mD --download-all --browser chrome --skip-download
+python main.py BV1xx411c7mD --text -o output.md
 ```
 
-### Command Line Arguments
+## Command Line Options
 
-- `--subtitles`: Download available subtitles for the video
-- `--download-all`: Download both audio and subtitles
-- `--use-cookies`: Utilize your Bilibili credentials when downloading (required for premium content and some subtitles)
-- `--browser {chrome,firefox}`: Extract cookies directly from your browser (alternative to --use-cookies)
-- `--skip-download`: Skip downloading actual media files (for subtitle-only downloads)
+| Option | Description |
+|--------|-------------|
+| `identifier` | Bilibili video URL, BVID, or user UID (required) |
+| `--user` | Fetch all videos from a user (requires UID as identifier) |
+| `--text` | Get video text content including subtitles in markdown format |
+| `--content` | Comma-separated list of content to include (subtitles,comments,uploader) |
+| `--format` | Format for subtitles (plain or markdown) |
+| `--comment-limit` | Number of top comments to include (default: 10) |
+| `--output`, `-o` | Output file path (if not specified, print to console) |
+| `--browser` | Browser to extract cookies from (chrome or firefox) for authenticated access |
+| `--debug` | Enable debug logging output |
+| `--retry-llm` | Retry LLM post-processing for an existing Whisper transcript |
 
-### Authentication
+## Logging and Debug Output
 
-There are multiple ways to authenticate for accessing subtitles:
+Control the verbosity of logs:
 
-1. **Direct browser cookie extraction (recommended):**
-   ```bash
-   python main.py BV1xx411c7mD --subtitles --browser chrome
-   ```
-   This extracts cookies directly from your browser, which works best for subtitles.
+```bash
+# Show detailed debug information
+python main.py BV1xx411c7mD --text --debug
 
-2. Using the `extract_cookies.py` script to extract cookies first:
-   ```bash
-   python extract_cookies.py
-   python main.py BV1xx411c7mD --subtitles --use-cookies
-   ```
+# Normal operation with only important info
+python main.py BV1xx411c7mD --text
+```
 
-3. Providing credentials directly via command line arguments:
-   ```bash
-   python main.py BV1xx411c7mD --subtitles --use-cookies --sessdata "your_sessdata" --bili-jct "your_bili_jct" --buvid3 "your_buvid3"
-   ```
+The debug mode shows:
+- Detailed yt-dlp commands and outputs
+- API request details
+- Whisper processing details
+- LLM processing information
 
-4. Adding credentials to a `.env` file in the project directory:
-   ```
-   BILIBILI_SESSDATA=your_sessdata
-   BILIBILI_BILI_JCT=your_bili_jct
-   BILIBILI_BUVID3=your_buvid3
-   ```
+## Subtitle Extraction Features
 
-### Note About Subtitle Formats
+### Subtitle Source Priority
 
-Bilibili provides several types of subtitles:
+1. **Bilibili Official API**: Attempts to get subtitles through the official API
+2. **yt-dlp Subtitle Extraction**: Uses yt-dlp to extract available subtitles
+3. **Whisper AI Transcription**: Fallback method that downloads audio and uses Whisper AI for transcription
 
-1. **Danmaku**: These are scrolling comments, not traditional subtitles. They are saved in XML format.
-2. **AI Subtitles**: Machine-generated subtitles that may be available for some videos.
-3. **Manual Subtitles**: User-provided subtitle tracks.
+### Retry LLM Post-Processing
 
-Not all videos have all types of subtitles, and some require authentication to access.
+If the LLM post-processing of Whisper transcripts fails or you want to reprocess:
+
+```bash
+python main.py BV1xx411c7mD --retry-llm
+```
+
+## Environment Variables
+
+Create a `.env` file with the following variables:
+
+```
+# Bilibili credentials (optional)
+BILIBILI_SESSDATA=your_sessdata
+BILIBILI_BILI_JCT=your_bili_jct
+BILIBILI_BUVID3=your_buvid3
+
+# LLM configuration for transcript improvement
+LLM_MODEL=openai:gpt-4.1-nano
+LLM_API_KEY=your_api_key
+LLM_BASE_URL=https://api.openai.com # or your custom endpoint
+```
 
 ## Output
 
@@ -140,10 +169,16 @@ The tool will display the information in a nicely formatted table, including:
 - Upload time (in YYYY-MM-DD HH:MM:SS format)
 - Uploader information
 
-
-For user videos, it will show a list of all videos with their basic information.
+For video text content, it will include:
+- Video basic info
+- Uploader details
+- Tags and categories
+- Subtitles (from API, yt-dlp or Whisper)
+- Top comments
 
 ## Notes
 
 - Rate limiting may apply
-- Some information might not be available for all videos
+- Some videos require authentication for subtitle access
+- Whisper transcription quality varies depending on audio quality
+- LLM post-processing requires a valid API key and connection
