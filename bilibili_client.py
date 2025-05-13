@@ -590,12 +590,18 @@ class BilibiliClient:
                         console.print(
                             "[cyan]Downloading subtitles with yt-dlp...[/cyan]"
                         )
-                        download_with_ytdlp(
-                            url=url,
-                            output_path=str(base_dir / bvid),
-                            download_type="subtitles",
-                            browser=browser,  # Browser cookie will be extracted once and cached
-                        )
+
+                        # Use a progress indicator for subtitle download
+                        with console.status(
+                            "[bold cyan]Downloading subtitles with yt-dlp...[/bold cyan]",
+                            spinner="dots",
+                        ):
+                            download_with_ytdlp(
+                                url=url,
+                                output_path=str(base_dir / bvid),
+                                download_type="subtitles",
+                                browser=browser,  # Browser cookie will be extracted once and cached
+                            )
 
                         # Check if subtitles were downloaded
                         subtitle_files = list(base_dir.glob("*.vtt")) + list(
@@ -656,44 +662,72 @@ class BilibiliClient:
                     subtitles = "## Whisper Transcript (Corrected)\n" + corrected
                 else:
                     try:
+                        # Add a more prominent notification for users
+                        console.print(
+                            "[bold yellow]========================================================[/bold yellow]"
+                        )
+                        console.print(
+                            "[bold yellow]| Subtitles not available through standard methods       |[/bold yellow]"
+                        )
+                        console.print(
+                            "[bold yellow]| Starting audio transcription with Whisper AI           |[/bold yellow]"
+                        )
+                        console.print(
+                            "[bold yellow]| This may take several minutes depending on video length|[/bold yellow]"
+                        )
+                        console.print(
+                            "[bold yellow]========================================================[/bold yellow]"
+                        )
+
                         console.print(
                             "[cyan]Both API and yt-dlp failed to get subtitles. Falling back to Whisper audio transcription...[/cyan]"
                         )
-                        logger.info("Falling back to Whisper audio transcription...")
+                        logger.debug("Falling back to Whisper audio transcription...")
 
                         # Download audio using same browser cookie (will be cached from previous step)
                         console.print(
                             f"[cyan]Downloading audio for transcription...[/cyan]"
                         )
-                        download_with_ytdlp(
-                            url=url,
-                            output_path=str(audio_path),
-                            download_type="audio",
-                            browser=browser,  # Browser cookie will be reused from cache
-                        )
+
+                        # Use a progress indicator for audio download
+                        with console.status(
+                            "[bold cyan]Downloading audio file...[/bold cyan]",
+                            spinner="dots",
+                        ):
+                            download_with_ytdlp(
+                                url=url,
+                                output_path=str(audio_path),
+                                download_type="audio",
+                                browser=browser,  # Browser cookie will be reused from cache
+                            )
 
                         if not audio_path.exists() or audio_path.stat().st_size == 0:
                             raise Exception("Audio download failed or file is empty")
 
                         console.print(
-                            f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
+                            f"[cyan]Running Whisper for ASR transcript...[/cyan]"
                         )
-                        logger.info(
+                        logger.debug(
                             f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
                         )
 
-                        # Run Whisper
-                        cmd = [
-                            "whisper",
-                            str(audio_path),
-                            "--model",
-                            "turbo",
-                            "--output_format",
-                            "txt",
-                            "--output_dir",
-                            str(base_dir),
-                        ]
-                        subprocess.run(cmd, check=True)
+                        # Run Whisper with progress indicator
+                        with console.status(
+                            "[bold cyan]Transcribing audio with Whisper (this may take a while)...[/bold cyan]",
+                            spinner="dots",
+                        ):
+                            # Run Whisper
+                            cmd = [
+                                "whisper",
+                                str(audio_path),
+                                "--model",
+                                "turbo",
+                                "--output_format",
+                                "txt",
+                                "--output_dir",
+                                str(base_dir),
+                            ]
+                            subprocess.run(cmd, check=True)
 
                         # Move/rename output if needed
                         generated_txt = base_dir / (audio_path.stem + ".txt")
@@ -716,10 +750,8 @@ class BilibiliClient:
                                 "Whisper transcript generation failed or file is empty"
                             )
 
-                        console.print(
-                            f"[cyan]Whisper transcript generated at {transcript_path}. Starting LLM post-processing...[/cyan]"
-                        )
-                        logger.info(
+                        console.print(f"[cyan]Starting LLM post-processing...[/cyan]")
+                        logger.debug(
                             f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
                         )
                         transcript = transcript_path.read_text(encoding="utf-8")
@@ -728,8 +760,8 @@ class BilibiliClient:
                         llm = SimpleLLM()
                         try:
                             # Get both corrected transcript and key corrections in one call
-                            console.print(
-                                f"[cyan]Preparing to process transcript with {llm.provider}:{llm.model}...[/cyan]"
+                            logger.debug(
+                                f"Preparing to process transcript with {llm.provider}:{llm.model}..."
                             )
                             with console.status(
                                 "[bold green]Running LLM post-processing (this may take a while)...[/bold green]",

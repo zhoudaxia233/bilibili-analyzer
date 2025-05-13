@@ -3,11 +3,13 @@ from pathlib import Path
 from rich import print as rprint
 import tempfile
 import os
+import logging
 from extract_cookies import get_bilibili_cookies
 
 
 # Global cache for cookie files to avoid extracting them multiple times
 _cookie_file_cache = {}
+logger = logging.getLogger("bilibili_client")
 
 
 def ensure_bilibili_url(identifier: str) -> str:
@@ -132,12 +134,18 @@ def download_with_ytdlp(
     if output_path:
         cmd.extend(["-o", output_path])
 
-    # Add verbose output for debugging
-    cmd.append("-v")
+    # Add verbose output only in debug mode
+    if logger.isEnabledFor(logging.DEBUG):
+        cmd.append("-v")
+        # Show command in debug mode only
+        logger.debug(f"Running yt-dlp command: {' '.join(cmd)}")
+    else:
+        # Add quiet flag to reduce output when not in debug mode
+        cmd.append("-q")
 
     # Run the command
     try:
-        rprint(f"[cyan]Running yt-dlp command: {' '.join(cmd)}[/cyan]")
+        rprint(f"[cyan]Running yt-dlp command...[/cyan]")
         subprocess.run(cmd, check=True)
 
         # Provide more specific success message based on download type

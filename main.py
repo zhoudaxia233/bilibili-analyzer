@@ -168,9 +168,20 @@ async def main():
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO)
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    # Configure bilibili_client logger separately to control its verbosity
+    bilibili_logger = logging.getLogger("bilibili_client")
     if args.debug:
-        logging.getLogger("bilibili_client").setLevel(logging.DEBUG)
+        bilibili_logger.setLevel(logging.DEBUG)
+    else:
+        bilibili_logger.setLevel(logging.INFO)
+
+    # Suppress verbose logs from libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
     # Load credentials from .env
     credentials = load_credentials()
