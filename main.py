@@ -120,7 +120,7 @@ async def main():
     parser.add_argument(
         "--user",
         action="store_true",
-        help="Fetch all videos from a user (requires UID)",
+        help="Explicitly fetch videos from a user (overrides auto-detection)",
     )
     parser.add_argument(
         "--text",
@@ -190,7 +190,32 @@ async def main():
     client = BilibiliClient(**credentials)
 
     try:
-        if args.retry_llm:
+        # Auto-detect if identifier is a UID
+        is_uid = False
+        if (
+            not args.text and not args.retry_llm
+        ):  # Don't auto-detect for text or retry-llm modes
+            # Check if identifier is numeric (likely a UID)
+            if args.identifier.isdigit():
+                # UID is typically a number less than 10 digits
+                if len(args.identifier) <= 10:
+                    is_uid = True
+
+        # Use explicit --user flag to override auto-detection if specified
+        if args.user:
+            is_uid = True
+
+        if is_uid:
+            # Handle user videos
+            uid = int(args.identifier)
+            rprint(f"[cyan]Starting to fetch videos for user {uid}...[/cyan]")
+            videos = await client.get_user_videos(uid)
+            display_user_videos(videos)
+            if videos:
+                rprint(f"[green]Retrieved {len(videos)} videos from user {uid}[/green]")
+            else:
+                rprint("[yellow]No videos found for this user[/yellow]")
+        elif args.retry_llm:
             # Check if identifier is provided
             if not args.identifier:
                 rprint(
@@ -218,17 +243,6 @@ async def main():
             except Exception as e:
                 rprint(f"[red]Error during LLM post-processing: {str(e)}[/red]")
             return
-
-        if args.user:
-            # Handle user videos
-            uid = int(args.identifier)
-            rprint(f"[cyan]Starting to fetch videos for user {uid}...[/cyan]")
-            videos = await client.get_user_videos(uid)
-            display_user_videos(videos)
-            if videos:
-                rprint(f"[green]Retrieved {len(videos)} videos from user {uid}[/green]")
-            else:
-                rprint("[yellow]No videos found for this user[/yellow]")
         elif args.text:
             # Parse content parameter
             content_options = args.content.lower().split(",") if args.content else []

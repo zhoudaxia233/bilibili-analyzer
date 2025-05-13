@@ -6,6 +6,7 @@ A Python tool to fetch video information from Bilibili using either a video URL/
 
 - Fetch detailed information about a single video using its URL or BVID
 - Fetch all videos from a user using their UID
+- Auto-detect if an identifier is a user UID or video BVID
 - Extract video subtitles using multiple methods (API, yt-dlp, Whisper AI)
 - Beautiful console output using rich formatting with progress indicators
 - Support for both bilibili.com and b23.tv URLs
@@ -42,7 +43,12 @@ poetry run python main.py "BV1xx411c7mD"
 
 ### Fetch all videos from a user
 
-Using a user's UID:
+Using a user's UID (automatic detection):
+```bash
+poetry run python main.py 123456
+```
+
+You can also explicitly specify to fetch user videos:
 ```bash
 poetry run python main.py 123456 --user
 ```
@@ -100,7 +106,7 @@ python main.py BV1xx411c7mD --text -o output.md
 | Option | Description |
 |--------|-------------|
 | `identifier` | Bilibili video URL, BVID, or user UID (required) |
-| `--user` | Fetch all videos from a user (requires UID as identifier) |
+| `--user` | Explicitly fetch videos from a user (overrides auto-detection) |
 | `--text` | Get video text content including subtitles in markdown format |
 | `--content` | Comma-separated list of content to include (subtitles,comments,uploader) |
 | `--format` | Format for subtitles (plain or markdown) |
@@ -109,6 +115,13 @@ python main.py BV1xx411c7mD --text -o output.md
 | `--browser` | Browser to extract cookies from (chrome or firefox) for authenticated access |
 | `--debug` | Enable debug logging output |
 | `--retry-llm` | Retry LLM post-processing for an existing Whisper transcript |
+
+## Auto-Detection
+
+The tool automatically detects if the identifier is a user UID or a video BVID/URL:
+- If the identifier is a purely numeric value with 10 or fewer digits, it's treated as a user UID
+- Otherwise, it's treated as a video BVID or URL
+- The `--user` flag can be used to override this detection and force user mode
 
 ## Logging and Debug Output
 
