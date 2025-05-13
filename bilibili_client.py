@@ -4,7 +4,6 @@ import math
 import logging
 import subprocess
 import re
-import time
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
@@ -694,180 +693,44 @@ class BilibiliClient:
                     subtitles = "## Whisper Transcript (Corrected)\n" + corrected
                 else:
                     try:
-                        # Add a more prominent notification for users
-                        console.print(
-                            "[bold yellow]========================================================[/bold yellow]"
-                        )
-                        console.print(
-                            "[bold yellow]| Subtitles not available through standard methods       |[/bold yellow]"
-                        )
-                        console.print(
-                            "[bold yellow]| Starting audio transcription with Whisper AI           |[/bold yellow]"
-                        )
-                        console.print(
-                            "[bold yellow]| This may take several minutes depending on video length|[/bold yellow]"
-                        )
-                        console.print(
-                            "[bold yellow]========================================================[/bold yellow]"
-                        )
-
                         console.print(
                             "[cyan]Both API and yt-dlp failed to get subtitles. Falling back to Whisper audio transcription...[/cyan]"
                         )
-                        logger.debug("Falling back to Whisper audio transcription...")
+                        logger.info("Falling back to Whisper audio transcription...")
 
+                        # Download audio using same browser cookie (will be cached from previous step)
                         console.print(
-                            f"[cyan]Running Whisper for ASR transcript...[/cyan]"
+                            f"[cyan]Downloading audio for transcription...[/cyan]"
+                        )
+                        download_with_ytdlp(
+                            url=url,
+                            output_path=str(audio_path),
+                            download_type="audio",
+                            browser=browser,  # Browser cookie will be reused from cache
                         )
 
-                        # Try to get audio with a more flexible approach if needed
-                        try:
-                            # First try downloading audio
-                            logger.debug(f"Downloading audio for {bvid}")
-                            with console.status(
-                                "[bold cyan]Downloading audio file...[/bold cyan]",
-                                spinner="dots",
-                            ):
-                                download_with_ytdlp(
-                                    url=url,
-                                    output_path=str(audio_path),
-                                    download_type="audio",
-                                    browser=browser,  # Browser cookie will be reused from cache
-                                )
+                        if not audio_path.exists() or audio_path.stat().st_size == 0:
+                            raise Exception("Audio download failed or file is empty")
 
-                            if (
-                                not audio_path.exists()
-                                or audio_path.stat().st_size == 0
-                            ):
-                                raise Exception(
-                                    "Audio download failed or file is empty"
-                                )
-
-                        except Exception as audio_error:
-                            # First attempt failed, try with fallback options
-                            logger.debug(
-                                f"First audio download attempt failed: {str(audio_error)}"
-                            )
-                            console.print(
-                                "[yellow]First audio download attempt failed, trying alternative approach...[/yellow]"
-                            )
-
-                            try:
-                                # Use more options for format selection
-                                cmd = [
-                                    "yt-dlp",
-                                    # Try any audio format, not just the best
-                                    "-f",
-                                    "ba/ba*/b/[ext=m4a]/[ext=mp3]/[ext=aac]",
-                                    # Fallback options
-                                    "--ignore-config",
-                                    "--geo-bypass",
-                                    "--no-check-certificate",
-                                ]
-
-                                # Add browser cookies if available
-                                if browser:
-                                    cookie_file = get_browser_cookies(browser)
-                                    if cookie_file:
-                                        cmd.extend(["--cookies", cookie_file])
-
-                                # Add url and output path
-                                cmd.append(url)
-                                cmd.extend(["-o", str(audio_path)])
-
-                                # Add quiet flag to reduce output
-                                cmd.append("-q")
-
-                                # Run the command with a more detailed status
-                                console.print(
-                                    "[cyan]Trying alternative download options...[/cyan]"
-                                )
-                                process = subprocess.run(
-                                    cmd, capture_output=True, text=True
-                                )
-
-                                if (
-                                    not audio_path.exists()
-                                    or audio_path.stat().st_size == 0
-                                ):
-                                    # Still failed, show detailed error
-                                    stderr = process.stderr
-                                    logger.debug(
-                                        f"Alternative download failed: {stderr}"
-                                    )
-                                    raise Exception(
-                                        f"Audio download failed after multiple attempts: {str(audio_error)}"
-                                    )
-
-                            except Exception as e:
-                                # Both attempts failed, can't proceed
-                                logger.debug(
-                                    f"All audio download attempts failed: {str(e)}"
-                                )
-                                raise Exception(
-                                    f"Unable to download audio for this video: {str(e)}"
-                                )
-
-                        logger.debug(
+                        console.print(
+                            f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
+                        )
+                        logger.info(
                             f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
                         )
 
-                        # Run Whisper with progress indicator
-                        with console.status(
-                            "[bold cyan]Transcribing audio with Whisper (this may take a while)...[/bold cyan]",
-                            spinner="dots",
-                        ):
-                            # Run Whisper with minimal output
-                            cmd = [
-                                "whisper",
-                                str(audio_path),
-                                "--model",
-                                "turbo",
-                                "--output_format",
-                                "txt",
-                                "--output_dir",
-                                str(base_dir),
-                                "--device",
-                                "cpu",  # Explicitly specify CPU to avoid GPU warnings
-                                "--quiet",  # Suppress verbose output
-                            ]
-
-                            # Use subprocess with stdout and stderr redirected to hide output
-                            process = subprocess.Popen(
-                                cmd,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                text=True,
-                            )
-
-                            # Poll the process to show simple progress
-                            start_time = time.time()
-                            while process.poll() is None:
-                                elapsed = time.time() - start_time
-                                # Update status every 2 seconds with elapsed time
-                                if int(elapsed) % 2 == 0:
-                                    # Update status message with elapsed time
-                                    time_str = time.strftime(
-                                        "%M:%S", time.gmtime(elapsed)
-                                    )
-                                    console.print(
-                                        f"[cyan]Transcribing... (Time elapsed: {time_str})[/cyan]",
-                                        end="\r",
-                                    )
-                                time.sleep(0.5)
-
-                            # Get the final exit code
-                            exit_code = process.wait()
-
-                            # Check if the process was successful
-                            if exit_code != 0:
-                                stderr = process.stderr.read()
-                                logger.debug(
-                                    f"Whisper process failed with exit code {exit_code}: {stderr}"
-                                )
-                                raise Exception(
-                                    f"Whisper transcription failed with exit code {exit_code}"
-                                )
+                        # Run Whisper
+                        cmd = [
+                            "whisper",
+                            str(audio_path),
+                            "--model",
+                            "turbo",
+                            "--output_format",
+                            "txt",
+                            "--output_dir",
+                            str(base_dir),
+                        ]
+                        subprocess.run(cmd, check=True)
 
                         # Move/rename output if needed
                         generated_txt = base_dir / (audio_path.stem + ".txt")
@@ -890,8 +753,10 @@ class BilibiliClient:
                                 "Whisper transcript generation failed or file is empty"
                             )
 
-                        console.print(f"[cyan]Starting LLM post-processing...[/cyan]")
-                        logger.debug(
+                        console.print(
+                            f"[cyan]Whisper transcript generated at {transcript_path}. Starting LLM post-processing...[/cyan]"
+                        )
+                        logger.info(
                             f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
                         )
                         transcript = transcript_path.read_text(encoding="utf-8")
@@ -900,8 +765,8 @@ class BilibiliClient:
                         llm = SimpleLLM()
                         try:
                             # Get both corrected transcript and key corrections in one call
-                            logger.debug(
-                                f"Preparing to process transcript with {llm.provider}:{llm.model}..."
+                            console.print(
+                                f"[cyan]Preparing to process transcript with {llm.provider}:{llm.model}...[/cyan]"
                             )
                             with console.status(
                                 "[bold green]Running LLM post-processing (this may take a while)...[/bold green]",
@@ -1122,7 +987,6 @@ class BilibiliClient:
                 logger.debug(
                     f"Trying to extract credentials from {credential_browser} for user profile"
                 )
-                from utilities import get_browser_cookies
 
                 cookie_file = get_browser_cookies(credential_browser)
 

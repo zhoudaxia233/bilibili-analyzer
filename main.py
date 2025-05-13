@@ -12,7 +12,10 @@ from rich import print as rprint
 from rich.markdown import Markdown
 
 from bilibili_client import BilibiliClient, VideoInfo, VideoTextConfig
-from utilities import ensure_bilibili_url, download_with_ytdlp, get_browser_cookies
+from utilities import (
+    get_browser_cookies,
+    check_credentials,
+)
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -187,6 +190,17 @@ async def main():
         action="store_true",
         help="Don't include video descriptions in exported subtitles",
     )
+    # Add credential management options
+    parser.add_argument(
+        "--force-login",
+        action="store_true",
+        help="Force refresh of Bilibili credentials even if cached",
+    )
+    parser.add_argument(
+        "--clear-credentials",
+        action="store_true",
+        help="Clear all stored Bilibili credentials",
+    )
 
     args = parser.parse_args()
 
@@ -204,6 +218,9 @@ async def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
+
+    # Check for credentials and prompt if needed
+    check_credentials(args)
 
     # Load credentials from .env
     credentials = load_credentials()
