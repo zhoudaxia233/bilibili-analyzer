@@ -3,6 +3,8 @@ import os
 import math
 import logging
 import subprocess
+import re
+import time
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
@@ -13,8 +15,21 @@ from bilibili_api import video, user, Credential
 from pydantic import BaseModel, Field
 import openai
 from rich.console import Console
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
-from utilities import ensure_bilibili_url, download_with_ytdlp
+from utilities import (
+    ensure_bilibili_url,
+    download_with_ytdlp,
+    remove_timestamps,
+    format_subtitle_header,
+    get_browser_cookies,
+)
 
 logger = logging.getLogger("bilibili_client")
 console = Console()
@@ -642,6 +657,23 @@ class BilibiliClient:
                             f"[yellow]yt-dlp subtitle extraction failed: {str(e)}[/yellow]"
                         )
 
+                        # If no browser was provided, exit with authentication message
+                        if not browser:
+                            error_msg = f"Authentication required to download subtitles for {bvid}."
+                            console.print(f"[bold red]{error_msg}[/bold red]")
+                            console.print(
+                                f"[bold yellow]Please retry with browser authentication:[/bold yellow]"
+                            )
+                            command = f"python main.py {bvid} --text --browser chrome"
+
+                            # For batch processing, suggest appropriate command
+                            if "export_user_subtitles" in str(e):
+                                uid = bvid.split("_")[1] if "_" in bvid else "UID"
+                                command = f"python main.py {uid} --export-user-subtitles --browser chrome"
+
+                            console.print(f"[bold cyan]{command}[/bold cyan]")
+                            raise Exception(error_msg)
+
             # Step 3: Whisper fallback if both API and yt-dlp fail
             if not subtitles:
                 audio_path = base_dir / "temp_audio.m4a"
@@ -684,29 +716,98 @@ class BilibiliClient:
                         )
                         logger.debug("Falling back to Whisper audio transcription...")
 
-                        # Download audio using same browser cookie (will be cached from previous step)
-                        console.print(
-                            f"[cyan]Downloading audio for transcription...[/cyan]"
-                        )
-
-                        # Use a progress indicator for audio download
-                        with console.status(
-                            "[bold cyan]Downloading audio file...[/bold cyan]",
-                            spinner="dots",
-                        ):
-                            download_with_ytdlp(
-                                url=url,
-                                output_path=str(audio_path),
-                                download_type="audio",
-                                browser=browser,  # Browser cookie will be reused from cache
-                            )
-
-                        if not audio_path.exists() or audio_path.stat().st_size == 0:
-                            raise Exception("Audio download failed or file is empty")
-
                         console.print(
                             f"[cyan]Running Whisper for ASR transcript...[/cyan]"
                         )
+
+                        # Try to get audio with a more flexible approach if needed
+                        try:
+                            # First try downloading audio
+                            logger.debug(f"Downloading audio for {bvid}")
+                            with console.status(
+                                "[bold cyan]Downloading audio file...[/bold cyan]",
+                                spinner="dots",
+                            ):
+                                download_with_ytdlp(
+                                    url=url,
+                                    output_path=str(audio_path),
+                                    download_type="audio",
+                                    browser=browser,  # Browser cookie will be reused from cache
+                                )
+
+                            if (
+                                not audio_path.exists()
+                                or audio_path.stat().st_size == 0
+                            ):
+                                raise Exception(
+                                    "Audio download failed or file is empty"
+                                )
+
+                        except Exception as audio_error:
+                            # First attempt failed, try with fallback options
+                            logger.debug(
+                                f"First audio download attempt failed: {str(audio_error)}"
+                            )
+                            console.print(
+                                "[yellow]First audio download attempt failed, trying alternative approach...[/yellow]"
+                            )
+
+                            try:
+                                # Use more options for format selection
+                                cmd = [
+                                    "yt-dlp",
+                                    # Try any audio format, not just the best
+                                    "-f",
+                                    "ba/ba*/b/[ext=m4a]/[ext=mp3]/[ext=aac]",
+                                    # Fallback options
+                                    "--ignore-config",
+                                    "--geo-bypass",
+                                    "--no-check-certificate",
+                                ]
+
+                                # Add browser cookies if available
+                                if browser:
+                                    cookie_file = get_browser_cookies(browser)
+                                    if cookie_file:
+                                        cmd.extend(["--cookies", cookie_file])
+
+                                # Add url and output path
+                                cmd.append(url)
+                                cmd.extend(["-o", str(audio_path)])
+
+                                # Add quiet flag to reduce output
+                                cmd.append("-q")
+
+                                # Run the command with a more detailed status
+                                console.print(
+                                    "[cyan]Trying alternative download options...[/cyan]"
+                                )
+                                process = subprocess.run(
+                                    cmd, capture_output=True, text=True
+                                )
+
+                                if (
+                                    not audio_path.exists()
+                                    or audio_path.stat().st_size == 0
+                                ):
+                                    # Still failed, show detailed error
+                                    stderr = process.stderr
+                                    logger.debug(
+                                        f"Alternative download failed: {stderr}"
+                                    )
+                                    raise Exception(
+                                        f"Audio download failed after multiple attempts: {str(audio_error)}"
+                                    )
+
+                            except Exception as e:
+                                # Both attempts failed, can't proceed
+                                logger.debug(
+                                    f"All audio download attempts failed: {str(e)}"
+                                )
+                                raise Exception(
+                                    f"Unable to download audio for this video: {str(e)}"
+                                )
+
                         logger.debug(
                             f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
                         )
@@ -716,7 +817,7 @@ class BilibiliClient:
                             "[bold cyan]Transcribing audio with Whisper (this may take a while)...[/bold cyan]",
                             spinner="dots",
                         ):
-                            # Run Whisper
+                            # Run Whisper with minimal output
                             cmd = [
                                 "whisper",
                                 str(audio_path),
@@ -726,8 +827,47 @@ class BilibiliClient:
                                 "txt",
                                 "--output_dir",
                                 str(base_dir),
+                                "--device",
+                                "cpu",  # Explicitly specify CPU to avoid GPU warnings
+                                "--quiet",  # Suppress verbose output
                             ]
-                            subprocess.run(cmd, check=True)
+
+                            # Use subprocess with stdout and stderr redirected to hide output
+                            process = subprocess.Popen(
+                                cmd,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                            )
+
+                            # Poll the process to show simple progress
+                            start_time = time.time()
+                            while process.poll() is None:
+                                elapsed = time.time() - start_time
+                                # Update status every 2 seconds with elapsed time
+                                if int(elapsed) % 2 == 0:
+                                    # Update status message with elapsed time
+                                    time_str = time.strftime(
+                                        "%M:%S", time.gmtime(elapsed)
+                                    )
+                                    console.print(
+                                        f"[cyan]Transcribing... (Time elapsed: {time_str})[/cyan]",
+                                        end="\r",
+                                    )
+                                time.sleep(0.5)
+
+                            # Get the final exit code
+                            exit_code = process.wait()
+
+                            # Check if the process was successful
+                            if exit_code != 0:
+                                stderr = process.stderr.read()
+                                logger.debug(
+                                    f"Whisper process failed with exit code {exit_code}: {stderr}"
+                                )
+                                raise Exception(
+                                    f"Whisper transcription failed with exit code {exit_code}"
+                                )
 
                         # Move/rename output if needed
                         generated_txt = base_dir / (audio_path.stem + ".txt")
@@ -960,3 +1100,313 @@ class BilibiliClient:
         )
 
         return corrected_transcript
+
+    async def _get_user_profile(
+        self, uid: int, credential_browser: Optional[str] = None
+    ) -> dict:
+        """Get detailed user profile information.
+
+        Args:
+            uid: User ID
+            credential_browser: Browser to use for credential extraction
+
+        Returns:
+            Dictionary with user information including name, bio, followers, etc.
+        """
+        logger.debug(f"Fetching user profile for UID: {uid}")
+
+        # If browser is provided but credential is not set, try to extract credentials
+        temp_credential = None
+        if credential_browser and not self.credential:
+            try:
+                logger.debug(
+                    f"Trying to extract credentials from {credential_browser} for user profile"
+                )
+                from utilities import get_browser_cookies
+
+                cookie_file = get_browser_cookies(credential_browser)
+
+                if cookie_file:
+                    # Parse the cookies to extract Bilibili specific ones
+                    cookie_data = {}
+                    with open(cookie_file, "r") as f:
+                        for line in f:
+                            if line.startswith("#") or not line.strip():
+                                continue
+                            fields = line.strip().split("\t")
+                            if len(fields) >= 7:
+                                name, value = fields[5], fields[6]
+                                cookie_data[name] = value
+
+                    # Create a temporary credential for this request
+                    if any(
+                        k in cookie_data for k in ["SESSDATA", "bili_jct", "buvid3"]
+                    ):
+                        temp_credential = Credential(
+                            sessdata=cookie_data.get("SESSDATA"),
+                            bili_jct=cookie_data.get("bili_jct"),
+                            buvid3=cookie_data.get("buvid3"),
+                        )
+                        logger.debug(
+                            "Created temporary credential from browser cookies"
+                        )
+            except Exception as e:
+                logger.debug(f"Failed to extract credentials from browser: {str(e)}")
+
+        try:
+            # Create user object with credentials if available
+            u = user.User(uid, credential=temp_credential or self.credential)
+
+            # Get basic user info
+            user_info = await u.get_user_info()
+
+            # Get relation info (followers)
+            relation_info = await u.get_relation_info()
+
+            # Combine the information
+            profile = {
+                "uid": uid,
+                "name": user_info.get("name", "Unknown"),
+                "sign": user_info.get("sign", ""),
+                "level": user_info.get("level", 0),
+                "follower_count": relation_info.get("follower", 0),
+            }
+
+            # Try to get user's video count (may fail silently)
+            try:
+                space_info = await u.get_videos(pn=1, ps=1)
+                if space_info and "page" in space_info:
+                    profile["video_count"] = space_info["page"].get("count", 0)
+            except Exception as e:
+                logger.debug(f"Error getting video count: {str(e)}")
+                # Don't raise error for this optional info
+
+            return profile
+        except Exception as e:
+            logger.debug(f"Error fetching user profile: {str(e)}")
+            raise
+
+    async def get_all_user_subtitles(
+        self,
+        uid: int,
+        browser: Optional[str] = None,
+        limit: Optional[int] = None,
+        include_description: bool = True,
+    ) -> tuple[str, dict]:
+        """Get subtitles from all videos of a user and combine them into a single text file.
+
+        Args:
+            uid: User ID
+            browser: Browser to extract cookies from for authentication
+            limit: Maximum number of videos to process (None for all)
+            include_description: Whether to include video descriptions in the output
+
+        Returns:
+            Tuple of (combined subtitles text, stats dictionary)
+        """
+        console = Console()
+
+        # Confirm all input parameters before starting visual progress indicators
+        console.print(
+            f"[cyan]Initializing subtitle extraction for user {uid}...[/cyan]"
+        )
+
+        # Warn if no browser provided
+        if not browser:
+            console.print(
+                "[yellow]Warning: No browser authentication provided. Some videos may require authentication.[/yellow]"
+            )
+            console.print(
+                "[yellow]If export fails, retry with --browser chrome or --browser firefox[/yellow]"
+            )
+
+        # Get list of user's videos (this must be done before showing any progress bars)
+        console.print(f"[cyan]Fetching video list for user {uid}...[/cyan]")
+        videos = await self.get_user_videos(uid)
+
+        if not videos:
+            console.print("[yellow]No videos found for this user.[/yellow]")
+            return "", {
+                "total_videos": 0,
+                "processed_videos": 0,
+                "videos_with_subtitles": 0,
+            }
+
+        # Limit number of videos if specified
+        if limit and limit > 0 and limit < len(videos):
+            console.print(
+                f"[cyan]Limiting to {limit} videos out of {len(videos)} total videos[/cyan]"
+            )
+            videos = videos[:limit]
+        elif limit == 0:
+            console.print(
+                f"[yellow]Limit of 0 videos specified. No videos will be processed.[/yellow]"
+            )
+            return "", {
+                "total_videos": len(videos),
+                "processed_videos": 0,
+                "videos_with_subtitles": 0,
+            }
+        else:
+            console.print(f"[cyan]Found {len(videos)} videos to process[/cyan]")
+
+        # Last confirmation message before starting intensive processing
+        console.print(
+            "[bold cyan]Beginning subtitle extraction for all videos...[/bold cyan]"
+        )
+
+        # Statistics tracking
+        stats = {
+            "total_videos": len(videos),
+            "processed_videos": 0,
+            "videos_with_subtitles": 0,
+            "subtitle_sources": {"api": 0, "yt-dlp": 0, "whisper": 0, "failed": 0},
+        }
+
+        # Add flag to identify this is from export_user_subtitles
+        # This will be used in exception handling to suggest the right command
+        os.environ["export_user_subtitles"] = str(uid)
+
+        try:
+            # Create text content config that only includes subtitles
+            config = VideoTextConfig(
+                include_subtitles=True,
+                include_comments=False,
+                include_uploader_info=False,
+                subtitle_markdown=False,
+            )
+
+            all_subtitles = []
+
+            # Process videos with progress bar
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TimeElapsedColumn(),
+                TextColumn("•"),
+                TimeRemainingColumn(),
+                console=console,
+                expand=True,
+            ) as progress:
+                task = progress.add_task(
+                    "[cyan]Processing videos...", total=len(videos)
+                )
+
+                for video in videos:
+                    # Update progress
+                    progress.update(
+                        task,
+                        description=f"[cyan]Processing {video.bvid}: {video.title[:30]}...",
+                    )
+
+                    try:
+                        # Get video content with subtitles
+                        content = await self.get_video_text_content(
+                            video.bvid, config=config, browser=browser
+                        )
+
+                        # Update processed count
+                        stats["processed_videos"] += 1
+
+                        # Check if subtitles were found
+                        if content.subtitles:
+                            # Determine subtitle source from content
+                            subtitle_source = "api"
+                            if "Whisper Transcript" in content.subtitles:
+                                subtitle_source = "whisper"
+                            elif "yt-dlp" in content.subtitles:
+                                subtitle_source = "yt-dlp"
+
+                            # Update stats
+                            stats["videos_with_subtitles"] += 1
+                            stats["subtitle_sources"][subtitle_source] += 1
+
+                            # Format subtitle text
+                            header = format_subtitle_header(video, include_description)
+                            subtitle_text = content.subtitles
+
+                            # Remove section headers that might be in markdown
+                            subtitle_text = re.sub(
+                                r"^#+\s*Video Subtitles.*$",
+                                "",
+                                subtitle_text,
+                                flags=re.MULTILINE,
+                            )
+                            subtitle_text = re.sub(
+                                r"^#+\s*Whisper Transcript.*$",
+                                "",
+                                subtitle_text,
+                                flags=re.MULTILINE,
+                            )
+
+                            # Remove timestamps
+                            clean_subtitles = remove_timestamps(subtitle_text)
+
+                            # Add to results
+                            all_subtitles.append(f"{header}\n\n{clean_subtitles}")
+                        else:
+                            # No subtitles found
+                            header = format_subtitle_header(video, include_description)
+                            all_subtitles.append(f"{header}\n\n[无字幕]")
+                            stats["subtitle_sources"]["failed"] += 1
+
+                    except Exception as e:
+                        error_message = str(e)
+                        logger.debug(
+                            f"Error processing video {video.bvid}: {error_message}"
+                        )
+
+                        # Check if it's an authentication error
+                        if "Authentication required" in error_message:
+                            # Re-raise to exit the entire process
+                            raise
+
+                        # Special handling for yt-dlp format errors
+                        if "Requested format is not available" in error_message:
+                            console.print(
+                                f"[yellow]Video {video.bvid} format not available for download, skipping...[/yellow]"
+                            )
+                        # Special handling for deleted or restricted videos
+                        elif (
+                            "This video is unavailable" in error_message
+                            or "has been deleted" in error_message
+                        ):
+                            console.print(
+                                f"[yellow]Video {video.bvid} is unavailable or deleted, skipping...[/yellow]"
+                            )
+                        # General error message for other cases
+                        else:
+                            console.print(
+                                f"[yellow]Error processing video {video.bvid}: {error_message}[/yellow]"
+                            )
+
+                        # Add error message for all errors
+                        header = format_subtitle_header(video, include_description)
+                        all_subtitles.append(
+                            f"{header}\n\n[字幕获取失败: {error_message}]"
+                        )
+                        stats["subtitle_sources"]["failed"] += 1
+
+                    # Update progress
+                    progress.advance(task)
+
+            # Combine all subtitles with double newline between videos
+            combined_text = "\n\n\n".join(all_subtitles)
+
+            # Calculate total token count (rough estimate)
+            stats["total_tokens"] = len(combined_text.split()) * 1.5
+
+            # Display summary
+            console.print(f"[green]Processing complete![/green]")
+            console.print(
+                f"[green]Processed {stats['processed_videos']} videos, found subtitles for {stats['videos_with_subtitles']} videos[/green]"
+            )
+
+            return combined_text, stats
+
+        finally:
+            # Clean up the environment variable
+            if "export_user_subtitles" in os.environ:
+                del os.environ["export_user_subtitles"]

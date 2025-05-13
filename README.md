@@ -8,6 +8,7 @@ A Python tool to fetch video information from Bilibili using either a video URL/
 - Fetch all videos from a user using their UID
 - Auto-detect if an identifier is a user UID or video BVID
 - Extract video subtitles using multiple methods (API, yt-dlp, Whisper AI)
+- Export all subtitles from a user's videos to a single text file
 - Beautiful console output using rich formatting with progress indicators
 - Support for both bilibili.com and b23.tv URLs
 - Automatic handling of video duration and timestamp formatting
@@ -101,6 +102,59 @@ python main.py BV1xx411c7mD --text --format markdown
 python main.py BV1xx411c7mD --text -o output.md
 ```
 
+## Export All User Subtitles
+
+You can export all subtitles from a user's videos into a single text file:
+
+```bash
+python main.py 12345678 --export-user-subtitles
+```
+
+This will:
+1. Get the list of all videos from the user
+2. Extract subtitles from each video using the same 3-step approach (API → yt-dlp → Whisper)
+3. Clean up and remove timestamps from the subtitles
+4. Add video information header to each video's subtitles
+5. Combine all subtitles into a single text file
+6. Save the file in a folder named after the user's UID (e.g., `user_12345678/all_subtitles.txt`)
+7. Generate a statistics file with processing details
+
+### Authentication for subtitle export
+
+For users with private or premium videos, authentication is required:
+
+```bash
+python main.py 12345678 --export-user-subtitles --browser chrome
+```
+
+If authentication is needed but not provided, the program will exit early with a clear message.
+
+### Customize the export process
+
+Limit the number of videos to process:
+```bash
+python main.py 12345678 --export-user-subtitles --subtitle-limit 10
+```
+
+Exclude video descriptions from headers:
+```bash
+python main.py 12345678 --export-user-subtitles --no-description
+```
+
+Specify output file:
+```bash
+python main.py 12345678 --export-user-subtitles -o custom_output.txt
+```
+
+### Output files
+
+The tool creates a folder structure for the output:
+```
+user_12345678/
+  ├── all_subtitles.txt    # Combined subtitles from all videos
+  └── stats.txt            # Statistics about the processing
+```
+
 ## Command Line Options
 
 | Option | Description |
@@ -115,6 +169,9 @@ python main.py BV1xx411c7mD --text -o output.md
 | `--browser` | Browser to extract cookies from (chrome or firefox) for authenticated access |
 | `--debug` | Enable debug logging output |
 | `--retry-llm` | Retry LLM post-processing for an existing Whisper transcript |
+| `--export-user-subtitles` | Export all subtitles from a user's videos to a single text file |
+| `--subtitle-limit` | Limit the number of videos to process when exporting subtitles |
+| `--no-description` | Don't include video descriptions in exported subtitles |
 
 ## Auto-Detection
 

@@ -3,13 +3,19 @@ import asyncio
 import argparse
 import logging
 from pathlib import Path
+from datetime import datetime
+
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 from rich.markdown import Markdown
+
 from bilibili_client import BilibiliClient, VideoInfo, VideoTextConfig
-from utilities import ensure_bilibili_url, download_with_ytdlp
+from utilities import ensure_bilibili_url, download_with_ytdlp, get_browser_cookies
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 
 def load_credentials():
@@ -165,6 +171,22 @@ async def main():
         action="store_true",
         help="Retry LLM post-processing for an existing whisper transcript",
     )
+    parser.add_argument(
+        "--export-user-subtitles",
+        action="store_true",
+        help="Export all subtitles from a user's videos to a single text file",
+    )
+    parser.add_argument(
+        "--subtitle-limit",
+        type=int,
+        help="Limit the number of videos to process when exporting subtitles",
+        default=None,
+    )
+    parser.add_argument(
+        "--no-description",
+        action="store_true",
+        help="Don't include video descriptions in exported subtitles",
+    )
 
     args = parser.parse_args()
 
@@ -193,8 +215,8 @@ async def main():
         # Auto-detect if identifier is a UID
         is_uid = False
         if (
-            not args.text and not args.retry_llm
-        ):  # Don't auto-detect for text or retry-llm modes
+            not args.text and not args.retry_llm and not args.export_user_subtitles
+        ):  # Don't auto-detect for specific modes
             # Check if identifier is numeric (likely a UID)
             if args.identifier.isdigit():
                 # UID is typically a number less than 10 digits
@@ -205,7 +227,262 @@ async def main():
         if args.user:
             is_uid = True
 
-        if is_uid:
+        # Handle export-user-subtitles mode - this requires a UID
+        if args.export_user_subtitles:
+            # Verify the identifier is a UID (must be a number)
+            if not args.identifier.isdigit():
+                rprint(
+                    "[red]Error: User UID must be a numeric value for exporting subtitles[/red]"
+                )
+                return
+
+            uid = int(args.identifier)
+
+            # Ask for confirmation if no limit is set to avoid accidental processing of many videos
+            subtitle_limit = args.subtitle_limit
+            if subtitle_limit is None:
+                console = Console()
+
+                # Fetch user info to display
+                try:
+                    console.print(f"[cyan]Fetching user information...[/cyan]")
+                    user_info = await client._get_user_profile(uid)
+
+                    # Format and display user info
+                    console.print(f"[cyan bold]User Information:[/cyan bold]")
+                    console.print(
+                        f"[cyan]Username: [white]{user_info.get('name', 'Unknown')}[/white][/cyan]"
+                    )
+                    console.print(
+                        f"[cyan]Bio: [white]{user_info.get('sign', 'No bio')}[/white][/cyan]"
+                    )
+                    console.print(
+                        f"[cyan]Followers: [white]{user_info.get('follower_count', 0):,}[/white][/cyan]"
+                    )
+                    console.print(
+                        f"[cyan]Total videos: [white]{user_info.get('video_count', len(videos)):,}[/white][/cyan]"
+                    )
+                    if "level" in user_info:
+                        console.print(
+                            f"[cyan]Level: [white]{user_info.get('level', 0)}[/white][/cyan]"
+                        )
+                except Exception as e:
+                    logger.debug(f"Error fetching user details: {str(e)}")
+                    console.print(
+                        "[yellow]Could not fetch detailed user information[/yellow]"
+                    )
+
+                console.print(
+                    "[yellow]Warning: You're about to export subtitles from all videos of this user.[/yellow]"
+                )
+                response = input(
+                    "Enter a number to limit videos, or press Enter to process all: "
+                )
+                if response.strip().isdigit():
+                    subtitle_limit = int(response.strip())
+                    console.print(f"[cyan]Limiting to {subtitle_limit} videos[/cyan]")
+
+                # Handle special case: user entered 0 videos
+                if subtitle_limit == 0:
+                    console.print(
+                        "[yellow]You specified 0 videos to process. Exiting without processing any videos.[/yellow]"
+                    )
+                    return
+
+            # Create folder with user UID
+            user_folder = Path(f"user_{uid}")
+            user_folder.mkdir(exist_ok=True)
+
+            # Define output file name inside user folder
+            output_file = args.output
+            if not output_file:
+                output_file = user_folder / "all_subtitles.txt"
+            elif not Path(output_file).is_absolute():
+                # If relative path provided, place inside user folder
+                output_file = user_folder / output_file
+
+            # Execute the subtitle export
+            console = Console()
+            console.print(f"[cyan]Starting subtitle export for user {uid}...[/cyan]")
+            console.print(f"[cyan]Output will be saved to {output_file}[/cyan]")
+
+            # Handle browser authentication first if provided
+            browser = args.browser
+            if browser:
+                # Initialize credentials early to ensure cookie extraction happens before any API calls
+                console.print(
+                    f"[cyan]Extracting cookies from {browser} browser...[/cyan]"
+                )
+                try:
+                    # Use browser but don't actually download anything yet, just to extract cookies
+                    cookie_file = get_browser_cookies(browser)
+                    if cookie_file:
+                        console.print(
+                            f"[green]Successfully extracted cookies from {browser}[/green]"
+                        )
+                    else:
+                        console.print(
+                            f"[yellow]No cookies found in {browser}. Make sure you're logged into Bilibili.[/yellow]"
+                        )
+                except Exception as e:
+                    logger.debug(f"Error extracting cookies: {str(e)}")
+                    console.print(
+                        f"[yellow]Warning: Could not extract cookies from {browser}: {str(e)}[/yellow]"
+                    )
+            # If browser authentication is required but not provided, prompt user
+            elif not browser:
+                console.print(
+                    "[yellow]Do you want to use browser authentication? (Recommended for better results)[/yellow]"
+                )
+                console.print(
+                    "[yellow]This will help access more videos and obtain better quality subtitles[/yellow]"
+                )
+                auth_response = (
+                    input("Enter 'chrome', 'firefox', or press Enter to skip: ")
+                    .strip()
+                    .lower()
+                )
+
+                if auth_response in ["chrome", "firefox"]:
+                    browser = auth_response
+                    console.print(f"[cyan]Using {browser} for authentication[/cyan]")
+
+                    # Initialize browser cookies immediately
+                    try:
+                        cookie_file = get_browser_cookies(browser)
+                        if cookie_file:
+                            console.print(
+                                f"[green]Successfully extracted cookies from {browser}[/green]"
+                            )
+                        else:
+                            console.print(
+                                f"[yellow]No cookies found in {browser}. Make sure you're logged into Bilibili.[/yellow]"
+                            )
+                    except Exception as e:
+                        logger.debug(f"Error extracting cookies: {str(e)}")
+                        console.print(
+                            f"[yellow]Warning: Could not extract cookies from {browser}: {str(e)}[/yellow]"
+                        )
+
+            # Clear any previous status messages and show a fresh start message
+            console.print("")  # Add an empty line for visual separation
+            console.print(
+                f"[bold cyan]Starting subtitle extraction process with all inputs confirmed...[/bold cyan]"
+            )
+            console.print("")  # Add an empty line for visual separation
+
+            # Get user info for statistics with the browser authentication already set up
+            try:
+                user_info = await client._get_user_profile(
+                    uid, credential_browser=browser
+                )
+            except Exception as e:
+                logger.debug(f"Error getting user profile in main: {str(e)}")
+                user_info = {"uid": uid, "name": f"UID:{uid}"}
+
+            # Get all user subtitles
+            include_description = not args.no_description
+            combined_text, stats = await client.get_all_user_subtitles(
+                uid,
+                browser=browser,  # Use the possibly user-provided browser choice
+                limit=subtitle_limit,
+                include_description=include_description,
+            )
+
+            # Save to file
+            if combined_text:
+                # Create directory if it doesn't exist
+                output_dir = os.path.dirname(output_file)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+
+                # Add user info header to the combined text
+                user_header = []
+                user_header.append(
+                    f"# B站用户 {user_info.get('name', f'UID:{uid}')} 的视频字幕集合"
+                )
+                user_header.append(f"UID: {uid}")
+                if user_info.get("sign"):
+                    user_header.append(f"个人简介: {user_info.get('sign', '')}")
+                user_header.append(f"粉丝数: {user_info.get('follower_count', 0):,}")
+                if "video_count" in user_info:
+                    user_header.append(f"视频总数: {user_info.get('video_count', 0):,}")
+                if "level" in user_info:
+                    user_header.append(f"等级: {user_info.get('level', 0)}")
+                user_header.append(
+                    f"字幕提取时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                user_header.append(f"处理的视频数: {stats['processed_videos']}")
+                user_header.append(
+                    f"成功获取字幕的视频数: {stats['videos_with_subtitles']}"
+                )
+                user_header.append("\n" + "=" * 80 + "\n")
+
+                # Write header followed by combined text
+                with open(output_file, "w", encoding="utf-8") as f:
+                    f.write("\n".join(user_header) + "\n\n" + combined_text)
+
+                # Save statistics to file as well
+                stats_file = user_folder / "stats.txt"
+                with open(stats_file, "w", encoding="utf-8") as f:
+                    f.write(f"# 字幕提取统计 - 用户ID: {uid}\n")
+                    # Add user info if available
+                    if user_info:
+                        f.write(f"用户名: {user_info.get('name', 'Unknown')}\n")
+                        if user_info.get("sign"):
+                            f.write(f"个人简介: {user_info.get('sign', '')}\n")
+                        f.write(f"粉丝数: {user_info.get('follower_count', 0):,}\n")
+                        if "video_count" in user_info:
+                            f.write(f"视频总数: {user_info.get('video_count', 0):,}\n")
+                        if "level" in user_info:
+                            f.write(f"等级: {user_info.get('level', 0)}\n")
+                        f.write("\n")
+
+                    f.write(
+                        f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    )
+                    f.write(f"总视频数: {stats['total_videos']}\n")
+                    f.write(f"处理视频数: {stats['processed_videos']}\n")
+                    f.write(f"有字幕的视频数: {stats['videos_with_subtitles']}\n")
+                    f.write(
+                        f"无字幕的视频数: {stats['processed_videos'] - stats['videos_with_subtitles']}\n\n"
+                    )
+                    f.write(f"字幕来源:\n")
+                    f.write(f"  - Bilibili API: {stats['subtitle_sources']['api']}\n")
+                    f.write(f"  - yt-dlp: {stats['subtitle_sources']['yt-dlp']}\n")
+                    f.write(f"  - Whisper: {stats['subtitle_sources']['whisper']}\n")
+                    f.write(f"  - 失败: {stats['subtitle_sources']['failed']}\n\n")
+                    f.write(f"估计的token数: {int(stats['total_tokens']):,}\n")
+
+                # Report success
+                console.print(
+                    f"[green]Successfully saved {stats['videos_with_subtitles']} video subtitles to {output_file}[/green]"
+                )
+                console.print(f"[green]Statistics saved to {stats_file}[/green]")
+
+                # Show summary stats
+                console.print("[cyan]--- Summary ---[/cyan]")
+                console.print(f"Total videos processed: {stats['processed_videos']}")
+                console.print(
+                    f"Videos with subtitles: {stats['videos_with_subtitles']}"
+                )
+                console.print(
+                    f"Videos without subtitles: {stats['processed_videos'] - stats['videos_with_subtitles']}"
+                )
+                console.print(f"Subtitle sources:")
+                console.print(f"  - Bilibili API: {stats['subtitle_sources']['api']}")
+                console.print(f"  - yt-dlp: {stats['subtitle_sources']['yt-dlp']}")
+                console.print(f"  - Whisper: {stats['subtitle_sources']['whisper']}")
+                console.print(f"  - Failed: {stats['subtitle_sources']['failed']}")
+                console.print(f"Estimated tokens: {int(stats['total_tokens']):,}")
+            else:
+                console.print(
+                    "[yellow]No subtitles were found or all processing failed.[/yellow]"
+                )
+
+            return
+
+        elif is_uid:
             # Handle user videos
             uid = int(args.identifier)
             rprint(f"[cyan]Starting to fetch videos for user {uid}...[/cyan]")

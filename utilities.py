@@ -1,9 +1,10 @@
 import subprocess
-from pathlib import Path
-from rich import print as rprint
-import tempfile
 import os
 import logging
+import re
+import tempfile
+from pathlib import Path
+from rich import print as rprint
 from extract_cookies import get_bilibili_cookies
 
 
@@ -168,3 +169,69 @@ def download_with_ytdlp(
         else:
             rprint(f"[red]yt-dlp download failed with error code {e.returncode}[/red]")
         raise
+
+
+def remove_timestamps(subtitle_text: str) -> str:
+    """Remove timestamps from subtitles.
+
+    Works with various subtitle formats:
+    - Whisper output: [00:00.000 --> 00:02.880] Text
+    - SRT format: 1\n00:00:00,000 --> 00:00:02,880\nText
+    - VTT format: 00:00.000 --> 00:00:02.880\nText
+
+    Args:
+        subtitle_text: The subtitle text with timestamps
+
+    Returns:
+        Cleaned subtitle text with timestamps removed
+    """
+    # Different patterns to match various subtitle formats
+    patterns = [
+        # Whisper style [00:00.000 --> 00:02.880]
+        r"\[\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}\.\d{3}\]\s*",
+        # SRT style timestamps (with line numbers)
+        r"^\d+\s*\n\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n",
+        # VTT style timestamps
+        r"^\d{2}:\d{2}[:.]\d{3}\s*-->\s*\d{2}:\d{2}[:.]\d{3}\s*\n",
+        # Bilibili API style timestamps with from/to
+        r"\[\d+\.\d+\]\s*",
+    ]
+
+    # Apply each pattern
+    result = subtitle_text
+    for pattern in patterns:
+        result = re.sub(pattern, "", result, flags=re.MULTILINE)
+
+    # Clean up multiple newlines
+    result = re.sub(r"\n{3,}", "\n\n", result)
+
+    return result.strip()
+
+
+def format_subtitle_header(video_info, include_description=True) -> str:
+    """Format a header with video information to prepend to subtitles.
+
+    Args:
+        video_info: VideoInfo object containing video metadata
+        include_description: Whether to include video description
+
+    Returns:
+        Formatted header string
+    """
+    header = [
+        f"# {video_info.title}",
+        f"BVID: {video_info.bvid}",
+        f"Uploader: {video_info.owner_name} (UID: {video_info.owner_mid})",
+        f"Upload Time: {video_info.upload_time}",
+        f"Views: {video_info.view_count:,}",
+    ]
+
+    if include_description and video_info.description:
+        # Add a separator line
+        header.append("\nDescription:")
+        # Indent description lines
+        description_lines = video_info.description.split("\n")
+        for line in description_lines:
+            header.append(f"> {line}")
+
+    return "\n".join(header)
