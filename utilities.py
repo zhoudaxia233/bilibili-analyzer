@@ -6,7 +6,10 @@ import tempfile
 import json
 import time
 from pathlib import Path
+
 from rich import print as rprint
+from rich.console import Console
+
 from extract_cookies import get_bilibili_cookies
 
 
@@ -276,6 +279,7 @@ def download_with_ytdlp(
         credentials: Deprecated, use browser parameter instead
         browser: Browser to extract cookies from (e.g., 'chrome', 'firefox')
     """
+    console = Console()
     cmd = ["yt-dlp"]
 
     # Skip actual video/audio download if only subtitles are requested
@@ -316,7 +320,7 @@ def download_with_ytdlp(
     if output_path:
         cmd.extend(["-o", output_path])
 
-    # Add verbose output only in debug mode
+    # Add quiet flag to reduce output when not in debug mode
     if logger.isEnabledFor(logging.DEBUG):
         cmd.append("-v")
         # Show command in debug mode only
@@ -325,18 +329,16 @@ def download_with_ytdlp(
         # Add quiet flag to reduce output when not in debug mode
         cmd.append("-q")
 
-    # Run the command - only show this message after we've handled cookies
-    try:
-        rprint(f"[cyan]Running yt-dlp command to download {download_type}...[/cyan]")
-        subprocess.run(cmd, check=True)
+    # Create status message based on download type
+    status_message = f"[bold cyan]Downloading {download_type}...[/bold cyan]"
 
-        # Provide more specific success message based on download type
-        if download_type == "subtitles":
-            rprint(f"[green]Subtitle download complete.[/green]")
-        elif download_type == "audio":
-            rprint(f"[green]Audio download complete.[/green]")
-        else:
-            rprint(f"[green]All requested content download complete.[/green]")
+    # Run the command with status indicator
+    try:
+        with console.status(status_message, spinner="dots") as status:
+            subprocess.run(cmd, check=True)
+            status.update(
+                f"[bold green]{download_type.capitalize()} download complete.[/bold green]"
+            )
     except subprocess.CalledProcessError as e:
         # Provide more context in error messages to help debugging
         if download_type == "subtitles" and not browser:

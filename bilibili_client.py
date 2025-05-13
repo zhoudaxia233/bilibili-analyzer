@@ -600,11 +600,6 @@ class BilibiliClient:
                             "[cyan]API subtitle extraction failed. Trying yt-dlp...[/cyan]"
                         )
 
-                        # Download subtitles with yt-dlp
-                        console.print(
-                            "[cyan]Downloading subtitles with yt-dlp...[/cyan]"
-                        )
-
                         # Use a progress indicator for subtitle download
                         with console.status(
                             "[bold cyan]Downloading subtitles with yt-dlp...[/bold cyan]",
@@ -626,7 +621,7 @@ class BilibiliClient:
                                 f"Downloaded subtitle files with yt-dlp: {subtitle_files}"
                             )
                             console.print(
-                                f"[green]Successfully downloaded subtitle files with yt-dlp: {', '.join(str(f.name) for f in subtitle_files)}[/green]"
+                                f"[green]Successfully downloaded subtitles with yt-dlp[/green]"
                             )
 
                             # Load the first subtitle file
@@ -699,9 +694,7 @@ class BilibiliClient:
                         logger.info("Falling back to Whisper audio transcription...")
 
                         # Download audio using same browser cookie (will be cached from previous step)
-                        console.print(
-                            f"[cyan]Downloading audio for transcription...[/cyan]"
-                        )
+                        # This will now use the status indicator from the updated download_with_ytdlp function
                         download_with_ytdlp(
                             url=url,
                             output_path=str(audio_path),
@@ -712,14 +705,11 @@ class BilibiliClient:
                         if not audio_path.exists() or audio_path.stat().st_size == 0:
                             raise Exception("Audio download failed or file is empty")
 
-                        console.print(
-                            f"[cyan]Audio downloaded to {audio_path}. Running Whisper for ASR transcript...[/cyan]"
-                        )
                         logger.info(
                             f"Audio downloaded to {audio_path}. Running Whisper for ASR transcript..."
                         )
 
-                        # Run Whisper
+                        # Prepare Whisper command
                         cmd = [
                             "whisper",
                             str(audio_path),
@@ -730,7 +720,26 @@ class BilibiliClient:
                             "--output_dir",
                             str(base_dir),
                         ]
-                        subprocess.run(cmd, check=True)
+
+                        # Run Whisper and show output to user so they can see progress
+                        console.print(
+                            "[cyan]Starting Whisper transcription (showing actual output):[/cyan]"
+                        )
+
+                        # Run Whisper with visible output
+                        try:
+                            # Use subprocess.run with no redirection to show output
+                            result = subprocess.run(cmd, check=True)
+                            console.print(
+                                "[bold green]Transcription complete![/bold green]"
+                            )
+                        except subprocess.CalledProcessError as e:
+                            logger.debug(
+                                f"Whisper failed with return code {e.returncode}"
+                            )
+                            raise Exception(
+                                f"Whisper failed with return code {e.returncode}"
+                            )
 
                         # Move/rename output if needed
                         generated_txt = base_dir / (audio_path.stem + ".txt")
@@ -753,9 +762,6 @@ class BilibiliClient:
                                 "Whisper transcript generation failed or file is empty"
                             )
 
-                        console.print(
-                            f"[cyan]Whisper transcript generated at {transcript_path}. Starting LLM post-processing...[/cyan]"
-                        )
                         logger.info(
                             f"Whisper transcript generated at {transcript_path}. Starting LLM post-processing..."
                         )
@@ -763,67 +769,72 @@ class BilibiliClient:
 
                         # LLM post-processing (all config from env)
                         llm = SimpleLLM()
-                        try:
-                            # Get both corrected transcript and key corrections in one call
-                            console.print(
-                                f"[cyan]Preparing to process transcript with {llm.provider}:{llm.model}...[/cyan]"
-                            )
-                            with console.status(
-                                "[bold green]Running LLM post-processing (this may take a while)...[/bold green]",
-                                spinner="dots",
-                            ):
-                                full_response = llm.call(transcript)
 
-                            # Extract sections using the markers
-                            corrected_transcript = ""
-                            key_corrections = ""
-
-                            # Split the response into sections
-                            if (
-                                "CORRECTED_TRANSCRIPT:" in full_response
-                                and "KEY_CORRECTIONS:" in full_response
-                            ):
-                                parts = full_response.split("CORRECTED_TRANSCRIPT:", 1)[
-                                    1
-                                ]
-                                if "KEY_CORRECTIONS:" in parts:
-                                    corrected_transcript, key_corrections = parts.split(
-                                        "KEY_CORRECTIONS:", 1
-                                    )
-                                    corrected_transcript = corrected_transcript.strip()
-                                    key_corrections = key_corrections.strip()
-                            else:
-                                # Fallback if the LLM didn't follow the format
-                                corrected_transcript = full_response
-
-                            # Save corrected transcript
-                            corrected_path.write_text(
-                                corrected_transcript, encoding="utf-8"
-                            )
-
-                            # Save key corrections if available
-                            if key_corrections:
-                                (base_dir / "subtitles_corrections.txt").write_text(
-                                    key_corrections, encoding="utf-8"
+                        # Use status for LLM processing
+                        with console.status(
+                            "[bold cyan]Running LLM post-processing of transcript...[/bold cyan]",
+                            spinner="dots",
+                        ) as status:
+                            try:
+                                # Get both corrected transcript and key corrections in one call
+                                logger.debug(
+                                    f"Preparing to process transcript with {llm.provider}:{llm.model}..."
                                 )
 
-                            console.print(
-                                "[green]LLM post-processing complete. Corrected transcript ready.[/green]"
-                            )
-                            logger.info(
-                                "LLM post-processing complete. Corrected transcript ready."
-                            )
-                            subtitles = (
-                                "## Whisper Transcript (Corrected)\n"
-                                + corrected_transcript
-                            )
-                        except Exception as e:
-                            logger.debug(f"LLM post-processing failed: {e}")
-                            corrected_path.write_text(transcript, encoding="utf-8")
-                            console.print(
-                                "[yellow]LLM post-processing failed. Using raw Whisper transcript.[/yellow]"
-                            )
-                            subtitles = "## Whisper Transcript\n" + transcript
+                                full_response = llm.call(transcript)
+
+                                # Extract sections using the markers
+                                corrected_transcript = ""
+                                key_corrections = ""
+
+                                # Split the response into sections
+                                if (
+                                    "CORRECTED_TRANSCRIPT:" in full_response
+                                    and "KEY_CORRECTIONS:" in full_response
+                                ):
+                                    parts = full_response.split(
+                                        "CORRECTED_TRANSCRIPT:", 1
+                                    )[1]
+                                    if "KEY_CORRECTIONS:" in parts:
+                                        corrected_transcript, key_corrections = (
+                                            parts.split("KEY_CORRECTIONS:", 1)
+                                        )
+                                        corrected_transcript = (
+                                            corrected_transcript.strip()
+                                        )
+                                        key_corrections = key_corrections.strip()
+                                else:
+                                    # Fallback if the LLM didn't follow the format
+                                    corrected_transcript = full_response
+
+                                # Save corrected transcript
+                                corrected_path.write_text(
+                                    corrected_transcript, encoding="utf-8"
+                                )
+
+                                # Save key corrections if available
+                                if key_corrections:
+                                    (base_dir / "subtitles_corrections.txt").write_text(
+                                        key_corrections, encoding="utf-8"
+                                    )
+
+                                status.update(
+                                    "[bold green]LLM post-processing complete.[/bold green]"
+                                )
+                                logger.info(
+                                    "LLM post-processing complete. Corrected transcript ready."
+                                )
+                                subtitles = (
+                                    "## Whisper Transcript (Corrected)\n"
+                                    + corrected_transcript
+                                )
+                            except Exception as e:
+                                logger.debug(f"LLM post-processing failed: {e}")
+                                corrected_path.write_text(transcript, encoding="utf-8")
+                                status.update(
+                                    "[bold yellow]LLM post-processing failed. Using raw Whisper transcript.[/bold yellow]"
+                                )
+                                subtitles = "## Whisper Transcript\n" + transcript
 
                         # Clean up temp audio
                         if audio_path.exists():
