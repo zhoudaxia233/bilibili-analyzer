@@ -190,6 +190,11 @@ async def main():
         action="store_true",
         help="Don't include video descriptions in exported subtitles",
     )
+    parser.add_argument(
+        "--no-meta-info",
+        action="store_true",
+        help="Do not include meta info (title, views, coins, etc.) in the header of each video in exported subtitles",
+    )
     # Add credential management options
     parser.add_argument(
         "--force-login",
@@ -395,11 +400,13 @@ async def main():
 
             # Get all user subtitles
             include_description = not args.no_description
+            include_meta_info = not args.no_meta_info
             combined_text, stats = await client.get_all_user_subtitles(
                 uid,
                 browser=browser,  # Use the possibly user-provided browser choice
                 limit=subtitle_limit,
                 include_description=include_description,
+                include_meta_info=include_meta_info,
             )
 
             # Save to file

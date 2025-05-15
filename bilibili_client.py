@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
+import asyncio
 
 import aiohttp
 import requests
@@ -49,6 +50,7 @@ class VideoInfo(BaseModel):
     upload_time: str = Field(..., description="Upload time")
     owner_name: str = Field(..., description="Uploader's name")
     owner_mid: int = Field(..., description="Uploader's ID")
+    comment_count: int = Field(..., description="Comment count")
 
 
 class VideoTextConfig(BaseModel):
@@ -68,6 +70,10 @@ class VideoTextConfig(BaseModel):
     )
     subtitle_markdown: bool = Field(
         default=False, description="Whether to format subtitles in markdown"
+    )
+    include_meta_info: bool = Field(
+        default=True,
+        description="Whether to include meta info (title, views, coins, etc.) in the header",
     )
 
 
@@ -272,6 +278,7 @@ class BilibiliClient:
             upload_time=self._format_timestamp(info["pubdate"]),
             owner_name=info["owner"]["name"],
             owner_mid=info["owner"]["mid"],
+            comment_count=info["stat"]["reply"],
         )
 
     async def get_user_videos(
@@ -300,57 +307,35 @@ class BilibiliClient:
             f"[cyan]Found {total_count} videos across {total_pages} pages[/cyan]"
         )
 
-        # Add videos from first page
-        all_videos.extend(
-            [
-                VideoInfo(
-                    bvid=item["bvid"],
-                    title=item["title"],
-                    description=item["description"],
-                    duration=self._parse_duration(item["length"]),
-                    view_count=item["play"],
-                    like_count=item.get("like", 0),
-                    coin_count=item.get("coin", 0),
-                    favorite_count=item.get("favorite", 0),
-                    share_count=item.get("share", 0),
-                    upload_time=self._format_timestamp(item["created"]),
-                    owner_name=item["author"],
-                    owner_mid=uid,
-                )
-                for item in first_page["list"]["vlist"]
-            ]
-        )
-
-        # Fetch remaining pages
+        # Collect all bvids from all pages
+        bvids = [item["bvid"] for item in first_page["list"]["vlist"]]
         if total_pages > 1:
-            with console.status(
-                f"[bold green]Fetching remaining {total_pages-1} pages of videos...[/bold green]",
-                spinner="dots",
-            ) as status:
-                for page_num in range(2, total_pages + 1):
-                    status.update(
-                        f"[bold green]Fetching page {page_num}/{total_pages}...[/bold green]"
-                    )
-                    videos_page = await u.get_videos(pn=page_num, ps=page_size)
-                    page_videos = [
-                        VideoInfo(
-                            bvid=item["bvid"],
-                            title=item["title"],
-                            description=item["description"],
-                            duration=self._parse_duration(item["length"]),
-                            view_count=item["play"],
-                            like_count=item.get("like", 0),
-                            coin_count=item.get("coin", 0),
-                            favorite_count=item.get("favorite", 0),
-                            share_count=item.get("share", 0),
-                            upload_time=self._format_timestamp(item["created"]),
-                            owner_name=item["author"],
-                            owner_mid=uid,
-                        )
-                        for item in videos_page["list"]["vlist"]
-                    ]
-                    all_videos.extend(page_videos)
+            for page_num in range(2, total_pages + 1):
+                videos_page = await u.get_videos(pn=page_num, ps=page_size)
+                bvids.extend([item["bvid"] for item in videos_page["list"]["vlist"]])
 
+        # Fetch full info for each bvid (concurrently)
+        async def fetch_video_info(bvid):
+            v = video.Video(bvid=bvid)
+            info = await v.get_info()
+            return VideoInfo(
+                bvid=info["bvid"],
+                title=info["title"],
+                description=info["desc"],
+                duration=info["duration"],
+                view_count=info["stat"]["view"],
+                like_count=info["stat"]["like"],
+                coin_count=info["stat"]["coin"],
+                favorite_count=info["stat"]["favorite"],
+                share_count=info["stat"]["share"],
+                upload_time=self._format_timestamp(info["pubdate"]),
+                owner_name=info["owner"]["name"],
+                owner_mid=info["owner"]["mid"],
+                comment_count=info["stat"]["reply"],
+            )
+
+        # Use asyncio.gather for concurrency
+        all_videos = await asyncio.gather(*(fetch_video_info(bvid) for bvid in bvids))
         return all_videos
 
     async def _format_basic_info(self, info: dict) -> str:
@@ -1067,6 +1052,7 @@ class BilibiliClient:
         browser: Optional[str] = None,
         limit: Optional[int] = None,
         include_description: bool = True,
+        include_meta_info: bool = True,
     ) -> tuple[str, dict]:
         """Get subtitles from all videos of a user and combine them into a single text file.
 
@@ -1075,6 +1061,7 @@ class BilibiliClient:
             browser: Browser to extract cookies from for authentication
             limit: Maximum number of videos to process (None for all)
             include_description: Whether to include video descriptions in the output
+            include_meta_info: Whether to include meta info (title, views, coins, etc.)
 
         Returns:
             Tuple of (combined subtitles text, stats dictionary)
@@ -1149,6 +1136,7 @@ class BilibiliClient:
                 include_comments=False,
                 include_uploader_info=False,
                 subtitle_markdown=False,
+                include_meta_info=include_meta_info,
             )
 
             all_subtitles = []
@@ -1199,7 +1187,9 @@ class BilibiliClient:
                             stats["subtitle_sources"][subtitle_source] += 1
 
                             # Format subtitle text
-                            header = format_subtitle_header(video, include_description)
+                            header = format_subtitle_header(
+                                video, include_description, config.include_meta_info
+                            )
                             subtitle_text = content.subtitles
 
                             # Remove section headers that might be in markdown
@@ -1223,7 +1213,9 @@ class BilibiliClient:
                             all_subtitles.append(f"{header}\n\n{clean_subtitles}")
                         else:
                             # No subtitles found
-                            header = format_subtitle_header(video, include_description)
+                            header = format_subtitle_header(
+                                video, include_description, config.include_meta_info
+                            )
                             all_subtitles.append(f"{header}\n\n[无字幕]")
                             stats["subtitle_sources"]["failed"] += 1
 
@@ -1258,7 +1250,9 @@ class BilibiliClient:
                             )
 
                         # Add error message for all errors
-                        header = format_subtitle_header(video, include_description)
+                        header = format_subtitle_header(
+                            video, include_description, config.include_meta_info
+                        )
                         all_subtitles.append(
                             f"{header}\n\n[字幕获取失败: {error_message}]"
                         )

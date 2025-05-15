@@ -415,30 +415,52 @@ def remove_timestamps(subtitle_text: str) -> str:
     return result.strip()
 
 
-def format_subtitle_header(video_info, include_description=True) -> str:
+def format_subtitle_header(
+    video_info, include_description=True, include_meta_info=True
+) -> str:
     """Format a header with video information to prepend to subtitles.
 
     Args:
         video_info: VideoInfo object containing video metadata
         include_description: Whether to include video description
+        include_meta_info: Whether to include meta info (title, views, coins, etc.)
 
     Returns:
         Formatted header string
     """
-    header = [
-        f"# {video_info.title}",
-        f"BVID: {video_info.bvid}",
-        f"Uploader: {video_info.owner_name} (UID: {video_info.owner_mid})",
-        f"Upload Time: {video_info.upload_time}",
-        f"Views: {video_info.view_count:,}",
-    ]
-
-    if include_description and video_info.description:
+    header = []
+    if include_meta_info:
+        # Try to get comment count from video_info
+        comment_count = getattr(video_info, "comment_count", None)
+        if comment_count is None:
+            comment_count = getattr(video_info, "comment", None)
+        if comment_count is None:
+            comment_count = getattr(video_info, "reply", None)
+        if comment_count is None:
+            # Try stat.reply if video_info is a dict
+            if isinstance(video_info, dict):
+                comment_count = video_info.get("stat", {}).get("reply", 0)
+            else:
+                comment_count = 0
+        header.extend(
+            [
+                f"# {getattr(video_info, 'title', getattr(video_info, 'bvid', ''))}",
+                f"BVID: {getattr(video_info, 'bvid', '')}",
+                f"Uploader: {getattr(video_info, 'owner_name', '')} (UID: {getattr(video_info, 'owner_mid', '')})",
+                f"Upload Time: {getattr(video_info, 'upload_time', '')}",
+                f"Views: {getattr(video_info, 'view_count', ''):,}",
+                f"Coins: {getattr(video_info, 'coin_count', ''):,}",
+                f"Likes: {getattr(video_info, 'like_count', ''):,}",
+                f"Favorites: {getattr(video_info, 'favorite_count', ''):,}",
+                f"Shares: {getattr(video_info, 'share_count', ''):,}",
+                f"Comments: {comment_count:,}",
+            ]
+        )
+    if include_description and getattr(video_info, "description", None):
         # Add a separator line
         header.append("\nDescription:")
         # Indent description lines
-        description_lines = video_info.description.split("\n")
+        description_lines = getattr(video_info, "description", "").split("\n")
         for line in description_lines:
             header.append(f"> {line}")
-
     return "\n".join(header)
