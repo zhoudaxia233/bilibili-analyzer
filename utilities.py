@@ -91,6 +91,23 @@ def ensure_bilibili_url(identifier: str) -> str:
     return identifier
 
 
+def format_time_ago(timestamp: float) -> str:
+    """Return a human-readable string like '5 days ago' for a given timestamp (seconds since epoch)."""
+    now = time.time()
+    diff = int(now - timestamp)
+    if diff < 60:
+        return f"{diff} seconds ago"
+    elif diff < 3600:
+        minutes = diff // 60
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    elif diff < 86400:
+        hours = diff // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    else:
+        days = diff // 86400
+        return f"{days} day{'s' if days != 1 else ''} ago"
+
+
 def get_browser_cookies(browser: str, force_refresh=False) -> str:
     """Get cookie file for the specified browser, creating it if necessary.
 
@@ -118,44 +135,51 @@ def get_browser_cookies(browser: str, force_refresh=False) -> str:
 
     # Check disk cache if not forcing refresh
     if not force_refresh:
-        cookies = load_cached_credentials(browser)
-        if cookies:
-            # Create temporary cookie file
-            cookie_file = tempfile.NamedTemporaryFile(
-                delete=False, suffix=".cookies", mode="w"
-            )
-
-            # Format cookies in Netscape format
-            cookie_lines = [
-                "# Netscape HTTP Cookie File",
-                "# https://curl.se/docs/http-cookies.html",
-                "# This file was generated from cached credentials.",
-                "",
-            ]
-
-            # Add cookies in the required format
-            domain = ".bilibili.com"
-            for name, value in cookies.items():
-                if value:
-                    if name == "SESSDATA":
-                        cookie_lines.append(
-                            f"{domain}\tTRUE\t/\tTRUE\t0\tSESSDATA\t{value}"
+        cred_path = get_credentials_path()
+        if cred_path.exists():
+            try:
+                creds = json.loads(cred_path.read_text())
+                browser_creds = creds.get(browser)
+                if browser_creds:
+                    cookies = browser_creds.get("cookies")
+                    timestamp = browser_creds.get("timestamp", 0)
+                    if cookies and (time.time() - timestamp) <= 30 * 24 * 3600:
+                        # Create temporary cookie file
+                        cookie_file = tempfile.NamedTemporaryFile(
+                            delete=False, suffix=".cookies", mode="w"
                         )
-                    elif name == "bili_jct":
-                        cookie_lines.append(
-                            f"{domain}\tTRUE\t/\tTRUE\t0\tbili_jct\t{value}"
+                        # Format cookies in Netscape format
+                        cookie_lines = [
+                            "# Netscape HTTP Cookie File",
+                            "# https://curl.se/docs/http-cookies.html",
+                            "# This file was generated from cached credentials.",
+                            "",
+                        ]
+                        domain = ".bilibili.com"
+                        for name, value in cookies.items():
+                            if value:
+                                if name == "SESSDATA":
+                                    cookie_lines.append(
+                                        f"{domain}\tTRUE\t/\tTRUE\t0\tSESSDATA\t{value}"
+                                    )
+                                elif name == "bili_jct":
+                                    cookie_lines.append(
+                                        f"{domain}\tTRUE\t/\tTRUE\t0\tbili_jct\t{value}"
+                                    )
+                                elif name == "buvid3":
+                                    cookie_lines.append(
+                                        f"{domain}\tTRUE\t/\tTRUE\t0\tbuvid3\t{value}"
+                                    )
+                        cookie_file.write("\n".join(cookie_lines))
+                        cookie_file.close()
+                        _cookie_file_cache[browser] = cookie_file.name
+                        age_str = format_time_ago(timestamp)
+                        rprint(
+                            f"[green]Using cached Bilibili credentials ({age_str}) from {browser}.[/green]"
                         )
-                    elif name == "buvid3":
-                        cookie_lines.append(
-                            f"{domain}\tTRUE\t/\tTRUE\t0\tbuvid3\t{value}"
-                        )
-
-            cookie_file.write("\n".join(cookie_lines))
-            cookie_file.close()
-
-            _cookie_file_cache[browser] = cookie_file.name
-            rprint(f"[green]Using cached Bilibili credentials from {browser}.[/green]")
-            return cookie_file.name
+                        return cookie_file.name
+            except Exception:
+                pass
 
     # Extract new cookies from browser - this is always executed when force_refresh is true
     rprint(

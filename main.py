@@ -279,10 +279,6 @@ async def main():
                     console.print(
                         f"[cyan]Total videos: [white]{user_info.get('video_count', len(videos)):,}[/white][/cyan]"
                     )
-                    if "level" in user_info:
-                        console.print(
-                            f"[cyan]Level: [white]{user_info.get('level', 0)}[/white][/cyan]"
-                        )
                 except Exception as e:
                     logger.debug(f"Error fetching user details: {str(e)}")
                     console.print(
