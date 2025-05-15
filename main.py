@@ -142,12 +142,6 @@ async def main():
         default="subtitles,comments,uploader",
     )
     parser.add_argument(
-        "--format",
-        help="Format for subtitles (plain or markdown)",
-        choices=["plain", "markdown"],
-        default="plain",
-    )
-    parser.add_argument(
         "--comment-limit",
         type=int,
         default=10,
@@ -550,7 +544,6 @@ async def main():
                 include_comments="comments" in content_options,
                 include_uploader_info="uploader" in content_options,
                 comment_limit=args.comment_limit,
-                subtitle_markdown=args.format == "markdown",
             )
 
             # Check if browser is specified for authentication

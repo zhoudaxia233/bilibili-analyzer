@@ -68,9 +68,6 @@ class VideoTextConfig(BaseModel):
     include_uploader_info: bool = Field(
         default=True, description="Whether to include detailed uploader information"
     )
-    subtitle_markdown: bool = Field(
-        default=False, description="Whether to format subtitles in markdown"
-    )
     include_meta_info: bool = Field(
         default=True,
         description="Whether to include meta info (title, views, coins, etc.) in the header",
@@ -380,15 +377,12 @@ class BilibiliClient:
         return f"""## Tags and Categories
 {', '.join(tag_names)}"""
 
-    async def _format_subtitles(
-        self, v: video.Video, cid: int, markdown: bool = False
-    ) -> Optional[str]:
-        """Format video subtitles as markdown or plain text
+    async def _format_subtitles(self, v: video.Video, cid: int) -> Optional[str]:
+        """Format video subtitles as plain text
 
         Args:
             v: Video object
             cid: Video CID
-            markdown: Whether to format output as markdown
         Returns:
             Formatted subtitle text or None if no subtitles found
         """
@@ -426,10 +420,7 @@ class BilibiliClient:
                 logger.debug(f"Fetching subtitle from URL: {subtitle_url}")
 
                 # Format subtitle information
-                if markdown:
-                    all_subtitles.append(f"\n### Subtitles ({lang})\n")
-                else:
-                    all_subtitles.append(f"\nSubtitles ({lang})\n")
+                all_subtitles.append(f"\nSubtitles ({lang})\n")
 
                 # Get and process actual subtitle content
                 try:
@@ -468,10 +459,7 @@ class BilibiliClient:
                 logger.debug("No subtitle content processed")
                 return None
 
-            if markdown:
-                return "## Video Subtitles\n" + "\n".join(all_subtitles)
-            else:
-                return "Video Subtitles\n" + "\n".join(all_subtitles)
+            return "Video Subtitles\n" + "\n".join(all_subtitles)
 
         except Exception as e:
             logger.debug(f"Main error in subtitle processing: {str(e)}")
@@ -542,9 +530,7 @@ class BilibiliClient:
                 console.print(
                     "[cyan]Trying to get subtitles via Bilibili API...[/cyan]"
                 )
-                subtitles = await self._format_subtitles(
-                    v, info["cid"], config.subtitle_markdown
-                )
+                subtitles = await self._format_subtitles(v, info["cid"])
                 if subtitles:
                     logger.debug("Successfully retrieved subtitles via Bilibili API")
                     console.print(
@@ -573,10 +559,7 @@ class BilibiliClient:
                     subtitle_content = subtitle_files[0].read_text(encoding="utf-8")
 
                     # Format subtitle content
-                    if config.subtitle_markdown:
-                        subtitles = "## Video Subtitles (yt-dlp)\n" + subtitle_content
-                    else:
-                        subtitles = "Video Subtitles (yt-dlp)\n" + subtitle_content
+                    subtitles = subtitle_content
                 else:
                     # No existing subtitle files, try to download with yt-dlp
                     try:
@@ -615,14 +598,7 @@ class BilibiliClient:
                             )
 
                             # Format subtitle content
-                            if config.subtitle_markdown:
-                                subtitles = (
-                                    "## Video Subtitles (yt-dlp)\n" + subtitle_content
-                                )
-                            else:
-                                subtitles = (
-                                    "Video Subtitles (yt-dlp)\n" + subtitle_content
-                                )
+                            subtitles = subtitle_content
                         else:
                             logger.debug(
                                 "No subtitle files found after yt-dlp download"
@@ -1135,7 +1111,6 @@ class BilibiliClient:
                 include_subtitles=True,
                 include_comments=False,
                 include_uploader_info=False,
-                subtitle_markdown=False,
                 include_meta_info=include_meta_info,
             )
 

@@ -90,16 +90,16 @@ This extracts cookies directly from your browser for authenticated access.
 python main.py BV1xx411c7mD --text --content subtitles,comments,uploader
 ```
 
+- Subtitles are always exported as plain text. There is no markdown formatting option.
+
 ### Format options
 
-```bash
-python main.py BV1xx411c7mD --text --format markdown
-```
+- Subtitles are always exported as plain text. The --format option is no longer available.
 
 ### Save output to file
 
 ```bash
-python main.py BV1xx411c7mD --text -o output.md
+python main.py BV1xx411c7mD --text -o output.txt
 ```
 
 ## Export All User Subtitles
@@ -161,9 +161,8 @@ user_12345678/
 |--------|-------------|
 | `identifier` | Bilibili video URL, BVID, or user UID (required) |
 | `--user` | Explicitly fetch videos from a user (overrides auto-detection) |
-| `--text` | Get video text content including subtitles in markdown format |
+| `--text` | Get video text content including subtitles in plain text format |
 | `--content` | Comma-separated list of content to include (subtitles,comments,uploader) |
-| `--format` | Format for subtitles (plain or markdown) |
 | `--comment-limit` | Number of top comments to include (default: 10) |
 | `--output`, `-o` | Output file path (if not specified, print to console) |
 | `--browser` | Browser to extract cookies from (chrome or firefox) for authenticated access |
@@ -172,6 +171,7 @@ user_12345678/
 | `--export-user-subtitles` | Export all subtitles from a user's videos to a single text file |
 | `--subtitle-limit` | Limit the number of videos to process when exporting subtitles |
 | `--no-description` | Don't include video descriptions in exported subtitles |
+| `--no-meta-info` | Don't include meta info (title, views, coins, etc.) in the header of each video in exported subtitles |
 
 ## Auto-Detection
 
