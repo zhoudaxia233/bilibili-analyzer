@@ -410,31 +410,9 @@ async def main():
                 if output_dir:
                     os.makedirs(output_dir, exist_ok=True)
 
-                # Add user info header to the combined text
-                user_header = []
-                user_header.append(
-                    f"# B站用户 {user_info.get('name', f'UID:{uid}')} 的视频字幕集合"
-                )
-                user_header.append(f"UID: {uid}")
-                if user_info.get("sign"):
-                    user_header.append(f"个人简介: {user_info.get('sign', '')}")
-                user_header.append(f"粉丝数: {user_info.get('follower_count', 0):,}")
-                if "video_count" in user_info:
-                    user_header.append(f"视频总数: {user_info.get('video_count', 0):,}")
-                if "level" in user_info:
-                    user_header.append(f"等级: {user_info.get('level', 0)}")
-                user_header.append(
-                    f"字幕提取时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                )
-                user_header.append(f"处理的视频数: {stats['processed_videos']}")
-                user_header.append(
-                    f"成功获取字幕的视频数: {stats['videos_with_subtitles']}"
-                )
-                user_header.append("\n" + "=" * 80 + "\n")
-
-                # Write header followed by combined text
+                # Write only the combined subtitles (no user header)
                 with open(output_file, "w", encoding="utf-8") as f:
-                    f.write("\n".join(user_header) + "\n\n" + combined_text)
+                    f.write(combined_text)
 
                 # Save statistics to file as well
                 stats_file = user_folder / "stats.txt"
