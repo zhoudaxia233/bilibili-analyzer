@@ -429,6 +429,10 @@ def format_subtitle_header(
         Formatted header string
     """
     header = []
+    # Always include the title
+    header.append(
+        f"Title: {getattr(video_info, 'title', getattr(video_info, 'bvid', ''))}"
+    )
     if include_meta_info:
         # Try to get comment count from video_info
         comment_count = getattr(video_info, "comment_count", None)
@@ -444,9 +448,7 @@ def format_subtitle_header(
                 comment_count = 0
         header.extend(
             [
-                f"Title: {getattr(video_info, 'title', getattr(video_info, 'bvid', ''))}",
                 f"BVID: {getattr(video_info, 'bvid', '')}",
-                f"Uploader: {getattr(video_info, 'owner_name', '')} (UID: {getattr(video_info, 'owner_mid', '')})",
                 f"Upload Time: {getattr(video_info, 'upload_time', '')}",
                 f"Views: {getattr(video_info, 'view_count', ''):,}",
                 f"Coins: {getattr(video_info, 'coin_count', ''):,}",
