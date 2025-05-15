@@ -444,7 +444,7 @@ def format_subtitle_header(
                 comment_count = 0
         header.extend(
             [
-                f"# {getattr(video_info, 'title', getattr(video_info, 'bvid', ''))}",
+                f"Title: {getattr(video_info, 'title', getattr(video_info, 'bvid', ''))}",
                 f"BVID: {getattr(video_info, 'bvid', '')}",
                 f"Uploader: {getattr(video_info, 'owner_name', '')} (UID: {getattr(video_info, 'owner_mid', '')})",
                 f"Upload Time: {getattr(video_info, 'upload_time', '')}",
