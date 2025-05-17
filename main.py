@@ -68,6 +68,7 @@ def display_video_info(video: VideoInfo):
     table.add_row("Coins", str(video.coin_count))
     table.add_row("Favorites", str(video.favorite_count))
     table.add_row("Shares", str(video.share_count))
+    table.add_row("Comments", str(video.comment_count))
     table.add_row("Upload Time", video.upload_time)
     table.add_row("Uploader", f"{video.owner_name} (UID: {video.owner_mid})")
 
@@ -138,15 +139,10 @@ async def main():
     )
     parser.add_argument(
         "--content",
-        help="Comma-separated list of content to include (subtitles,comments,uploader)",
-        default="subtitles,comments,uploader",
+        help="Comma-separated list of content to include (subtitles,uploader)",
+        default="subtitles,uploader",
     )
-    parser.add_argument(
-        "--comment-limit",
-        type=int,
-        default=10,
-        help="Number of top comments to include (default: 10)",
-    )
+
     parser.add_argument(
         "--output",
         "-o",
@@ -519,9 +515,7 @@ async def main():
             # Create config from content options
             config = VideoTextConfig(
                 include_subtitles="subtitles" in content_options,
-                include_comments="comments" in content_options,
                 include_uploader_info="uploader" in content_options,
-                comment_limit=args.comment_limit,
             )
 
             # Check if browser is specified for authentication

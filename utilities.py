@@ -434,18 +434,20 @@ def format_subtitle_header(
         f"Title: {getattr(video_info, 'title', getattr(video_info, 'bvid', ''))}"
     )
     if include_meta_info:
-        # Try to get comment count from video_info
-        comment_count = getattr(video_info, "comment_count", None)
-        if comment_count is None:
-            comment_count = getattr(video_info, "comment", None)
-        if comment_count is None:
-            comment_count = getattr(video_info, "reply", None)
-        if comment_count is None:
-            # Try stat.reply if video_info is a dict
-            if isinstance(video_info, dict):
-                comment_count = video_info.get("stat", {}).get("reply", 0)
-            else:
-                comment_count = 0
+        # Get comment count
+        comment_count = 0
+        if (
+            hasattr(video_info, "comment_count")
+            and video_info.comment_count is not None
+        ):
+            comment_count = video_info.comment_count
+        elif (
+            isinstance(video_info, dict)
+            and "stat" in video_info
+            and "reply" in video_info["stat"]
+        ):
+            comment_count = video_info["stat"]["reply"]
+
         header.extend(
             [
                 f"BVID: {getattr(video_info, 'bvid', '')}",

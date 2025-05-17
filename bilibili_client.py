@@ -56,14 +56,8 @@ class VideoInfo(BaseModel):
 class VideoTextConfig(BaseModel):
     """Configuration for video text content extraction"""
 
-    comment_limit: int = Field(
-        default=10, description="Number of top comments to include"
-    )
     include_subtitles: bool = Field(
         default=True, description="Whether to include video subtitles"
-    )
-    include_comments: bool = Field(
-        default=True, description="Whether to include video comments"
     )
     include_uploader_info: bool = Field(
         default=True, description="Whether to include detailed uploader information"
@@ -85,7 +79,6 @@ class VideoTextContent(BaseModel):
         None, description="Tags and categories in markdown"
     )
     subtitles: Optional[str] = Field(None, description="Video subtitles in markdown")
-    comments: Optional[str] = Field(None, description="Top comments in markdown")
 
     def to_markdown(self) -> str:
         """Convert all content to a single markdown string"""
@@ -97,8 +90,6 @@ class VideoTextContent(BaseModel):
             sections.append(self.tags_and_categories)
         if self.subtitles:
             sections.append(self.subtitles)
-        if self.comments:
-            sections.append(self.comments)
 
         return "\n\n".join(sections)
 
@@ -352,7 +343,8 @@ class BilibiliClient:
 - Likes: {stats['like']:,}
 - Coins: {stats['coin']:,}
 - Favorites: {stats['favorite']:,}
-- Shares: {stats['share']:,}"""
+- Shares: {stats['share']:,}
+- Comments: {stats['reply']:,}"""
 
     async def _format_uploader_info(self, info: dict) -> str:
         """Format uploader information as markdown"""
@@ -463,24 +455,6 @@ class BilibiliClient:
 
         except Exception as e:
             logger.debug(f"Main error in subtitle processing: {str(e)}")
-            return None
-
-    async def _format_comments(self, v: video.Video, limit: int) -> Optional[str]:
-        """Format video comments as markdown"""
-        try:
-            comments = await v.get_comments(page_index=1, page_size=limit)
-            if not comments["replies"]:
-                return None
-
-            comment_text = []
-            for comment in comments["replies"]:
-                author = comment["member"]["uname"]
-                content = comment["content"]["message"]
-                likes = comment["like"]
-                comment_text.append(f"**{author}** (👍 {likes:,}):\n{content}\n")
-
-            return "## Top Comments\n" + "\n".join(comment_text)
-        except Exception:
             return None
 
     async def get_video_text_content(
@@ -814,18 +788,11 @@ class BilibiliClient:
                                 f"All subtitle extraction methods failed despite authentication. Error: {str(e)}"
                             )
 
-        comments = (
-            await self._format_comments(v, config.comment_limit)
-            if config.include_comments
-            else None
-        )
-
         return VideoTextContent(
             basic_info=basic_info,
             uploader_info=uploader_info,
             tags_and_categories=tags_and_categories,
             subtitles=subtitles,
-            comments=comments,
         )
 
     async def retry_llm_processing(self, identifier: str) -> str:
@@ -1109,7 +1076,6 @@ class BilibiliClient:
             # Create text content config that only includes subtitles
             config = VideoTextConfig(
                 include_subtitles=True,
-                include_comments=False,
                 include_uploader_info=False,
                 include_meta_info=include_meta_info,
             )
