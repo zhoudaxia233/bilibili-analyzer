@@ -1,8 +1,6 @@
 """Unit tests for bilibili_client.py module."""
 
 import os
-from unittest.mock import patch, MagicMock, AsyncMock
-
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
@@ -104,18 +102,18 @@ class TestBilibiliClient:
     """Tests for BilibiliClient class."""
 
     @pytest_asyncio.fixture
-    async def mock_client(self, mock_credentials):
+    async def mock_client(self, mocker, mock_credentials):
         """Create a mocked BilibiliClient instance."""
-        with patch("bilibili_api.Credential") as MockCredential:
-            mock_cred = MagicMock()
-            MockCredential.return_value = mock_cred
+        mock_credential = mocker.patch("bilibili_api.Credential")
+        mock_cred = mocker.MagicMock()
+        mock_credential.return_value = mock_cred
 
-            client = BilibiliClient(
-                sessdata=mock_credentials["sessdata"],
-                bili_jct=mock_credentials["bili_jct"],
-                buvid3=mock_credentials["buvid3"],
-            )
-            yield client
+        client = BilibiliClient(
+            sessdata=mock_credentials["sessdata"],
+            bili_jct=mock_credentials["bili_jct"],
+            buvid3=mock_credentials["buvid3"],
+        )
+        yield client
 
     def test_extract_bvid(self, mock_client):
         """Test extracting BVID from various formats."""
@@ -134,62 +132,60 @@ class TestBilibiliClient:
         with pytest.raises(ValueError):
             mock_client._extract_bvid("https://example.com")
 
-    def test_parse_duration(self, mock_client):
+    def test_parse_duration(self, mocker, mock_client):
         """Test parsing duration strings."""
         # Just test the interface with expected inputs/outputs
         # Instead of mocking the implementation (which is redundant)
-        with patch.object(mock_client, "_parse_duration") as mock_parse:
-            mock_parse.side_effect = lambda duration_str: {
-                "01:30:45": 5445,  # 1h 30m 45s
-                "05:15": 315,  # 5m 15s
-                "00:30": 30,  # 30s
-            }[duration_str]
+        mock_parse = mocker.patch.object(mock_client, "_parse_duration")
+        mock_parse.side_effect = lambda duration_str: {
+            "01:30:45": 5445,  # 1h 30m 45s
+            "05:15": 315,  # 5m 15s
+            "00:30": 30,  # 30s
+        }[duration_str]
 
-            assert mock_client._parse_duration("01:30:45") == 5445
-            assert mock_client._parse_duration("05:15") == 315
-            assert mock_client._parse_duration("00:30") == 30
+        assert mock_client._parse_duration("01:30:45") == 5445
+        assert mock_client._parse_duration("05:15") == 315
+        assert mock_client._parse_duration("00:30") == 30
 
-    def test_format_timestamp(self, mock_client):
+    def test_format_timestamp(self, mocker, mock_client):
         """Test formatting timestamps."""
         # Just test the interface with expected inputs/outputs
-        with patch.object(mock_client, "_format_timestamp") as mock_format:
-            mock_format.side_effect = lambda timestamp: {
-                300: "05:00",  # 5 minutes
-                3661: "01:01:01",  # 1h 1m 1s
-                30: "00:30",  # 30 seconds
-            }[timestamp]
+        mock_format = mocker.patch.object(mock_client, "_format_timestamp")
+        mock_format.side_effect = lambda timestamp: {
+            300: "05:00",  # 5 minutes
+            3661: "01:01:01",  # 1h 1m 1s
+            30: "00:30",  # 30 seconds
+        }[timestamp]
 
-            assert mock_client._format_timestamp(300) == "05:00"
-            assert mock_client._format_timestamp(3661) == "01:01:01"
-            assert mock_client._format_timestamp(30) == "00:30"
+        assert mock_client._format_timestamp(300) == "05:00"
+        assert mock_client._format_timestamp(3661) == "01:01:01"
+        assert mock_client._format_timestamp(30) == "00:30"
 
     @pytest.mark.asyncio
-    async def test_get_video_info(self, mock_client, mock_video_api_response):
+    async def test_get_video_info(self, mocker, mock_client, mock_video_api_response):
         """Test getting video information."""
-        with patch(
-            "bilibili_api.video.Video.get_info", new_callable=AsyncMock
-        ) as mock_get_info:
-            mock_get_info.return_value = mock_video_api_response["data"]
+        mock_get_info = mocker.patch("bilibili_api.video.Video.get_info")
+        mock_get_info.return_value = mock_video_api_response["data"]
 
-            # Call the method with mocked API
-            video_info = await mock_client.get_video_info("BV1xx411c7mD")
+        # Call the method with mocked API
+        video_info = await mock_client.get_video_info("BV1xx411c7mD")
 
-            # Verify result
-            assert isinstance(video_info, VideoInfo)
-            assert video_info.bvid == "BV1xx411c7mD"
-            assert video_info.title == "Test Video Title"
-            assert video_info.duration == 300
-            assert video_info.view_count == 12345
-            assert video_info.owner_name == "TestUser"
+        # Verify result
+        assert isinstance(video_info, VideoInfo)
+        assert video_info.bvid == "BV1xx411c7mD"
+        assert video_info.title == "Test Video Title"
+        assert video_info.duration == 300
+        assert video_info.view_count == 12345
+        assert video_info.owner_name == "TestUser"
 
     @pytest.mark.asyncio
     async def test_get_user_videos(
-        self, mock_client, mock_user_videos_response, mock_video_info
+        self, mocker, mock_client, mock_user_videos_response, mock_video_info
     ):
         """Test getting user videos."""
         # Method 1: Replace the entire method to avoid creating unawaited coroutines
         # This approach completely replaces the get_user_videos method with a simple mock
-        mock_client.get_user_videos = AsyncMock()
+        mock_client.get_user_videos = mocker.AsyncMock()
 
         # Create mock video info objects for the results
         video_info_1 = VideoInfo(
@@ -248,75 +244,79 @@ class TestBilibiliClient:
 class TestSimpleLLM:
     """Tests for SimpleLLM class."""
 
-    def test_init_openai_default(self):
+    def test_init_openai_default(self, mocker):
         """Test initializing with default OpenAI settings."""
         # Clear all environment variables first to avoid influence from actual env
-        with patch.dict(os.environ, {}, clear=True):
-            # Set only the API key we need
-            with patch.dict(os.environ, {"LLM_API_KEY": "test_key"}):
-                with patch("openai.OpenAI") as MockOpenAI:
-                    llm = SimpleLLM()
+        mocker.patch.dict(os.environ, {}, clear=True)
+        # Set only the API key we need
+        mocker.patch.dict(os.environ, {"LLM_API_KEY": "test_key"})
+        mock_openai = mocker.patch("openai.OpenAI")
 
-                    assert llm.provider == "openai"
-                    assert llm.model == "gpt-4.1-nano"
-                    assert llm.api_key == "test_key"
-                    MockOpenAI.assert_called_once_with(api_key="test_key")
+        llm = SimpleLLM()
 
-    def test_init_custom_model(self):
+        assert llm.provider == "openai"
+        assert llm.model == "gpt-4.1-nano"
+        assert llm.api_key == "test_key"
+        mock_openai.assert_called_once_with(api_key="test_key")
+
+    def test_init_custom_model(self, mocker):
         """Test initializing with custom model."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch.dict(
-                os.environ,
-                {"LLM_MODEL": "deepseek:deepseek-chat", "LLM_API_KEY": "test_key"},
-            ):
-                with patch("openai.OpenAI") as MockOpenAI:
-                    llm = SimpleLLM()
+        mocker.patch.dict(os.environ, {}, clear=True)
+        mocker.patch.dict(
+            os.environ,
+            {"LLM_MODEL": "deepseek:deepseek-chat", "LLM_API_KEY": "test_key"},
+        )
+        mock_openai = mocker.patch("openai.OpenAI")
 
-                    assert llm.provider == "deepseek"
-                    assert llm.model == "deepseek-chat"
-                    MockOpenAI.assert_called_once_with(api_key="test_key")
+        llm = SimpleLLM()
 
-    def test_init_with_base_url(self):
+        assert llm.provider == "deepseek"
+        assert llm.model == "deepseek-chat"
+        mock_openai.assert_called_once_with(api_key="test_key")
+
+    def test_init_with_base_url(self, mocker):
         """Test initializing with base URL."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch.dict(
-                os.environ,
-                {
-                    "LLM_MODEL": "openai:gpt-4",
-                    "LLM_API_KEY": "test_key",
-                    "LLM_BASE_URL": "https://api.example.com",
-                },
-            ):
-                with patch("openai.OpenAI") as MockOpenAI:
-                    llm = SimpleLLM()
+        mocker.patch.dict(os.environ, {}, clear=True)
+        mocker.patch.dict(
+            os.environ,
+            {
+                "LLM_MODEL": "openai:gpt-4",
+                "LLM_API_KEY": "test_key",
+                "LLM_BASE_URL": "https://api.example.com",
+            },
+        )
+        mock_openai = mocker.patch("openai.OpenAI")
 
-                    MockOpenAI.assert_called_once_with(
-                        api_key="test_key", base_url="https://api.example.com"
-                    )
+        llm = SimpleLLM()
 
-    def test_call_openai(self):
+        mock_openai.assert_called_once_with(
+            api_key="test_key", base_url="https://api.example.com"
+        )
+
+    def test_call_openai(self, mocker):
         """Test calling OpenAI API."""
-        with patch.dict(os.environ, {}, clear=True):
-            with patch.dict(
-                os.environ, {"LLM_MODEL": "openai:gpt-4", "LLM_API_KEY": "test_key"}
-            ):
-                with patch("openai.OpenAI") as MockOpenAI:
-                    # Setup mock response
-                    mock_client = MagicMock()
-                    mock_completion = MagicMock()
-                    mock_choice = MagicMock()
-                    mock_message = MagicMock()
+        mocker.patch.dict(os.environ, {}, clear=True)
+        mocker.patch.dict(
+            os.environ, {"LLM_MODEL": "openai:gpt-4", "LLM_API_KEY": "test_key"}
+        )
+        mock_openai = mocker.patch("openai.OpenAI")
 
-                    mock_message.content = "Corrected text"
-                    mock_choice.message = mock_message
-                    mock_completion.choices = [mock_choice]
-                    mock_client.chat.completions.create.return_value = mock_completion
-                    MockOpenAI.return_value = mock_client
+        # Setup mock response
+        mock_client = mocker.MagicMock()
+        mock_completion = mocker.MagicMock()
+        mock_choice = mocker.MagicMock()
+        mock_message = mocker.MagicMock()
 
-                    # Initialize and call
-                    llm = SimpleLLM()
-                    result = llm.call("Test text")
+        mock_message.content = "Corrected text"
+        mock_choice.message = mock_message
+        mock_completion.choices = [mock_choice]
+        mock_client.chat.completions.create.return_value = mock_completion
+        mock_openai.return_value = mock_client
 
-                    # Verify result
-                    assert result == "Corrected text"
-                    mock_client.chat.completions.create.assert_called_once()
+        # Initialize and call
+        llm = SimpleLLM()
+        result = llm.call("Test text")
+
+        # Verify result
+        assert result == "Corrected text"
+        mock_client.chat.completions.create.assert_called_once()

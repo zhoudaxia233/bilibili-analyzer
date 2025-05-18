@@ -3,7 +3,6 @@
 import json
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 from utilities import (
     get_credentials_path,
@@ -16,84 +15,89 @@ from utilities import (
 )
 
 
-def test_get_credentials_path():
+def test_get_credentials_path(mocker):
     """Test credentials path generation."""
-    with patch("pathlib.Path.home") as mock_home:
-        mock_home.return_value = Path("/home/user")
-        with patch("pathlib.Path.mkdir") as mock_mkdir:
-            path = get_credentials_path()
-            assert path == Path("/home/user/.config/bilibili_analyzer/credentials.json")
-            mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
+    mock_home = mocker.patch("pathlib.Path.home")
+    mock_home.return_value = Path("/home/user")
+    mock_mkdir = mocker.patch("pathlib.Path.mkdir")
+
+    path = get_credentials_path()
+    assert path == Path("/home/user/.config/bilibili_analyzer/credentials.json")
+    mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
 
-def test_load_cached_credentials_no_file():
+def test_load_cached_credentials_no_file(mocker):
     """Test loading credentials when file doesn't exist."""
-    with patch("pathlib.Path.exists", return_value=False):
-        assert load_cached_credentials() == {}
-        assert load_cached_credentials(browser="chrome") is None
+    mocker.patch("pathlib.Path.exists", return_value=False)
+    assert load_cached_credentials() == {}
+    assert load_cached_credentials(browser="chrome") is None
 
 
-def test_load_cached_credentials(mock_credentials_file, mock_credentials):
+def test_load_cached_credentials(mocker, mock_credentials_file, mock_credentials):
     """Test loading credentials from file."""
-    with patch("utilities.get_credentials_path", return_value=mock_credentials_file):
-        # Mock the current time to be 1 hour after the fixtures' timestamp
-        with patch("time.time", return_value=1684000000 + 3600):
-            # Test loading all credentials
-            creds = load_cached_credentials()
-            assert "chrome" in creds
-            assert creds["chrome"]["cookies"] == mock_credentials
+    mocker.patch("utilities.get_credentials_path", return_value=mock_credentials_file)
+    # Mock the current time to be 1 hour after the fixtures' timestamp
+    mocker.patch("time.time", return_value=1684000000 + 3600)
 
-            # Test loading specific browser credentials
-            browser_creds = load_cached_credentials(browser="chrome")
-            assert browser_creds == mock_credentials
+    # Test loading all credentials
+    creds = load_cached_credentials()
+    assert "chrome" in creds
+    assert creds["chrome"]["cookies"] == mock_credentials
 
-            # Test browser not in credentials
-            assert load_cached_credentials(browser="firefox") is None
+    # Test loading specific browser credentials
+    browser_creds = load_cached_credentials(browser="chrome")
+    assert browser_creds == mock_credentials
+
+    # Test browser not in credentials
+    assert load_cached_credentials(browser="firefox") is None
 
 
-def test_load_cached_credentials_expired():
+def test_load_cached_credentials_expired(mocker):
     """Test loading expired credentials."""
-    with patch("utilities.get_credentials_path") as mock_path:
-        mock_path.return_value = Path("credentials.json")
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch("pathlib.Path.read_text") as mock_read:
-                # Create credentials with timestamp from 31 days ago
-                current_time = time.time()
-                old_timestamp = current_time - (31 * 24 * 3600)
-                mock_read.return_value = json.dumps(
-                    {
-                        "chrome": {
-                            "cookies": {"sessdata": "test"},
-                            "timestamp": old_timestamp,
-                        }
-                    }
-                )
+    mock_path = mocker.patch("utilities.get_credentials_path")
+    mock_path.return_value = Path("credentials.json")
+    mocker.patch("pathlib.Path.exists", return_value=True)
+    mock_read = mocker.patch("pathlib.Path.read_text")
 
-                # Mock current time to be 31 days after the timestamp
-                with patch("time.time", return_value=current_time):
-                    # Should return None for expired credentials
-                    assert load_cached_credentials(browser="chrome") is None
+    # Create credentials with timestamp from 31 days ago
+    current_time = time.time()
+    old_timestamp = current_time - (31 * 24 * 3600)
+    mock_read.return_value = json.dumps(
+        {
+            "chrome": {
+                "cookies": {"sessdata": "test"},
+                "timestamp": old_timestamp,
+            }
+        }
+    )
+
+    # Mock current time to be 31 days after the timestamp
+    mocker.patch("time.time", return_value=current_time)
+
+    # Should return None for expired credentials
+    assert load_cached_credentials(browser="chrome") is None
 
 
-def test_save_credentials(mock_temp_dir, mock_credentials):
+def test_save_credentials(mocker, mock_temp_dir, mock_credentials):
     """Test saving credentials to file."""
     creds_path = mock_temp_dir / "test_creds.json"
 
-    with patch("utilities.get_credentials_path", return_value=creds_path):
-        with patch("utilities.load_cached_credentials", return_value={}):
-            with patch("os.chmod") as mock_chmod:
-                # Save credentials
-                result = save_credentials("chrome", mock_credentials)
-                assert result is True
+    mocker.patch("utilities.get_credentials_path", return_value=creds_path)
+    mocker.patch("utilities.load_cached_credentials", return_value={})
+    mock_chmod = mocker.patch("os.chmod")
 
-                # Verify file content
-                saved_data = json.loads(creds_path.read_text())
-                assert "chrome" in saved_data
-                assert saved_data["chrome"]["cookies"] == mock_credentials
-                assert "timestamp" in saved_data["chrome"]
+    # Save credentials
+    result = save_credentials("chrome", mock_credentials)
+    assert result is True
 
-                # Verify permissions were set
-                mock_chmod.assert_called_once_with(creds_path, 0o600)
+    # Verify file content
+    saved_data = json.loads(creds_path.read_text())
+    assert "chrome" in saved_data
+    assert saved_data["chrome"]["cookies"] == mock_credentials
+    assert "timestamp" in saved_data["chrome"]
+
+    # Verify permissions were set
+    mock_chmod.assert_called_once_with(creds_path, 0o600)
 
 
 def test_ensure_bilibili_url():

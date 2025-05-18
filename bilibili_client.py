@@ -1234,6 +1234,7 @@ class BilibiliClient:
             "processed_videos": 0,
             "videos_with_subtitles": 0,
             "subtitle_sources": {"api": 0, "yt-dlp": 0, "whisper": 0, "failed": 0},
+            "failed_videos": [],
         }
 
         # Flag to identify we're in batch mode for get_video_text_content
@@ -1293,7 +1294,9 @@ class BilibiliClient:
                             header = format_subtitle_header(
                                 video, include_description, config.include_meta_info
                             )
-                            all_subtitles.append(f"{header}\n\n[跳过付费视频]")
+                            all_subtitles.append(
+                                f"{header}\n\n[skipped due to payment]"
+                            )
                             progress.advance(task)
                             continue
 
@@ -1326,7 +1329,9 @@ class BilibiliClient:
                                     include_description,
                                     config.include_meta_info,
                                 )
-                                all_subtitles.append(f"{header}\n\n[跳过付费视频]")
+                                all_subtitles.append(
+                                    f"{header}\n\n[skipped due to payment]"
+                                )
                                 progress.advance(task)
                                 continue
 
@@ -1389,7 +1394,7 @@ class BilibiliClient:
                         header = format_subtitle_header(
                             video, include_description, config.include_meta_info
                         )
-                        all_subtitles.append(f"{header}\n\n[无字幕]")
+                        all_subtitles.append(f"{header}\n\n[no subtitles]")
                         stats["subtitle_sources"]["failed"] += 1
 
                 except Exception as e:
@@ -1404,6 +1409,14 @@ class BilibiliClient:
                         progress.stop()
                         # Re-raise to exit the entire process
                         raise
+
+                    # Record failed video information
+                    failed_video_info = {
+                        "bvid": video.bvid,
+                        "title": video.title,
+                        "error": error_message,
+                    }
+                    stats["failed_videos"].append(failed_video_info)
 
                     # Special handling for yt-dlp format errors
                     if "Requested format is not available" in error_message:
@@ -1428,7 +1441,9 @@ class BilibiliClient:
                     header = format_subtitle_header(
                         video, include_description, config.include_meta_info
                     )
-                    all_subtitles.append(f"{header}\n\n[字幕获取失败: {error_message}]")
+                    all_subtitles.append(
+                        f"{header}\n\n[subtitle extraction failed: {error_message}]"
+                    )
                     stats["subtitle_sources"]["failed"] += 1
 
                 # Update progress
@@ -1445,5 +1460,20 @@ class BilibiliClient:
         console.print(
             f"[green]Processed {stats['processed_videos']} videos, found subtitles for {stats['videos_with_subtitles']} videos[/green]"
         )
+
+        # Display failed videos list
+        if stats["failed_videos"]:
+            console.print(
+                "\n[yellow]The following videos failed and can be retried later:[/yellow]"
+            )
+            for i, failed in enumerate(stats["failed_videos"], 1):
+                console.print(
+                    f"[yellow]{i}. BV{failed['bvid']}: {failed['title']}[/yellow]"
+                )
+
+            console.print("\n[cyan]To retry a specific video, use:[/cyan]")
+            console.print(
+                f"[cyan]  python main.py <BVID> --text --browser {browser or 'chrome'}[/cyan]"
+            )
 
         return combined_text, stats

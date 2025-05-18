@@ -467,6 +467,15 @@ async def main():
                     f.write(f"  - 失败: {stats['subtitle_sources']['failed']}\n\n")
                     f.write(f"估计的token数: {int(stats['total_tokens']):,}\n")
 
+                    # Add failed videos list
+                    if stats.get("failed_videos"):
+                        f.write(f"\nFailed Videos (Can be retried later):\n")
+                        for i, failed in enumerate(stats["failed_videos"], 1):
+                            f.write(f"{i}. BV{failed['bvid']}: {failed['title']}\n")
+                        f.write(
+                            f"\nRetry method: python main.py <BVID> --text --browser {browser or 'chrome'}\n"
+                        )
+
                 # Report success
                 console.print(
                     f"[green]Successfully saved {stats['videos_with_subtitles']} video subtitles to {output_file}[/green]"
