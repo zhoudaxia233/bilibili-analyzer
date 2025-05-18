@@ -429,10 +429,19 @@ def format_subtitle_header(
         Formatted header string
     """
     header = []
-    # Always include the title
-    header.append(
-        f"Title: {getattr(video_info, 'title', getattr(video_info, 'bvid', ''))}"
-    )
+
+    # Get values, ensuring they are proper for formatting
+    def get_value(attr_name, default=""):
+        if hasattr(video_info, attr_name):
+            return getattr(video_info, attr_name)
+        elif isinstance(video_info, dict) and attr_name in video_info:
+            return video_info[attr_name]
+        return default
+
+    # Always include the title with # prefix
+    title = get_value("title", get_value("bvid", ""))
+    header.append(f"# {title}")
+
     if include_meta_info:
         # Get comment count
         comment_count = 0
@@ -441,6 +450,8 @@ def format_subtitle_header(
             and video_info.comment_count is not None
         ):
             comment_count = video_info.comment_count
+        elif isinstance(video_info, dict) and "comment_count" in video_info:
+            comment_count = video_info["comment_count"]
         elif (
             isinstance(video_info, dict)
             and "stat" in video_info
@@ -450,21 +461,26 @@ def format_subtitle_header(
 
         header.extend(
             [
-                f"BVID: {getattr(video_info, 'bvid', '')}",
-                f"Upload Time: {getattr(video_info, 'upload_time', '')}",
-                f"Views: {getattr(video_info, 'view_count', ''):,}",
-                f"Coins: {getattr(video_info, 'coin_count', ''):,}",
-                f"Likes: {getattr(video_info, 'like_count', ''):,}",
-                f"Favorites: {getattr(video_info, 'favorite_count', ''):,}",
-                f"Shares: {getattr(video_info, 'share_count', ''):,}",
+                f"BVID: {get_value('bvid')}",
+                f"Upload Time: {get_value('upload_time')}",
+                f"Views: {get_value('view_count', 0):,}",
+                f"Coins: {get_value('coin_count', 0):,}",
+                f"Likes: {get_value('like_count', 0):,}",
+                f"Favorites: {get_value('favorite_count', 0):,}",
+                f"Shares: {get_value('share_count', 0):,}",
                 f"Comments: {comment_count:,}",
             ]
         )
-    if include_description and getattr(video_info, "description", None):
-        # Add a separator line
-        header.append("\nDescription:")
-        # Indent description lines
-        description_lines = getattr(video_info, "description", "").split("\n")
-        for line in description_lines:
-            header.append(f"> {line}")
+
+    if include_description:
+        # Get description
+        description = get_value("description")
+        if description:
+            # Add a separator line
+            header.append("\nDescription:")
+            # Indent description lines
+            description_lines = description.split("\n")
+            for line in description_lines:
+                header.append(f"> {line}")
+
     return "\n".join(header)
