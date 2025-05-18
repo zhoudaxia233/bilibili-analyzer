@@ -1,0 +1,420 @@
+import streamlit as st
+import subprocess
+import re
+import pandas as pd
+from pathlib import Path
+import os
+import json
+from datetime import datetime
+
+# Set page configuration
+st.set_page_config(
+    page_title="Bilibili Analyzer",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Custom CSS to make the UI more beautiful
+st.markdown(
+    """
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #FC8EAC;
+        margin-bottom: 1rem;
+    }
+    .sub-header {
+        font-size: 1.5rem;
+        font-weight: 500;
+        color: #73C2FB;
+        margin-bottom: 1rem;
+    }
+    .info-text {
+        font-size: 1rem;
+        color: #888888;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 4rem;
+        white-space: pre-wrap;
+        background-color: #1E1E1E;
+        border-radius: 5px;
+        color: white;
+        padding: 1rem 2rem;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #73C2FB !important;
+        color: white !important;
+    }
+    .stTextInput > div > div > input {
+        height: 3rem;
+    }
+    .stRadio > div > div > label {
+        background-color: #1E1E1E;
+        border-radius: 5px;
+        padding: 0.5rem 1rem;
+        margin-right: 0.5rem;
+    }
+    .stRadio > div {
+        display: flex;
+        flex-direction: row;
+    }
+    .result-container {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-top: 1rem;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+def format_duration(seconds):
+    """Format duration in seconds to HH:MM:SS"""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    seconds = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def run_command(cmd):
+    """Run a command and return the output"""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        st.error(f"Command failed with error: {e.stderr}")
+        return None
+
+
+def get_video_info(identifier, browser=None):
+    """Get video information using the Bilibili client"""
+    cmd = ["python", "main.py", identifier]
+
+    if browser:
+        cmd.extend(["--browser", browser])
+
+    return run_command(cmd)
+
+
+def get_video_text(identifier, content_types=None, browser=None, output=None):
+    """Get video text content"""
+    cmd = ["python", "main.py", identifier, "--text"]
+
+    if content_types:
+        cmd.extend(["--content", content_types])
+
+    if browser:
+        cmd.extend(["--browser", browser])
+
+    if output:
+        cmd.extend(["--output", output])
+
+    return run_command(cmd)
+
+
+def export_user_subtitles(
+    identifier,
+    browser=None,
+    subtitle_limit=None,
+    no_description=False,
+    no_meta_info=False,
+    output=None,
+):
+    """Export user subtitles"""
+    cmd = ["python", "main.py", identifier, "--export-user-subtitles"]
+
+    if browser:
+        cmd.extend(["--browser", browser])
+
+    if subtitle_limit:
+        cmd.extend(["--subtitle-limit", str(subtitle_limit)])
+
+    if no_description:
+        cmd.append("--no-description")
+
+    if no_meta_info:
+        cmd.append("--no-meta-info")
+
+    if output:
+        cmd.extend(["--output", output])
+
+    return run_command(cmd)
+
+
+def parse_video_info(output):
+    """Parse the video information from the command output"""
+    if not output:
+        return None
+
+    # Extract video information
+    video_info = {}
+
+    # Parse BVID
+    bvid_match = re.search(r"BVID\s+(.+)", output)
+    if bvid_match:
+        video_info["BVID"] = bvid_match.group(1)
+
+    # Parse Title
+    title_match = re.search(r"Title\s+(.+)", output)
+    if title_match:
+        video_info["Title"] = title_match.group(1)
+
+    # Parse Duration
+    duration_match = re.search(r"Duration\s+(.+)", output)
+    if duration_match:
+        video_info["Duration"] = duration_match.group(1)
+
+    # Parse Views
+    views_match = re.search(r"Views\s+(\d+)", output)
+    if views_match:
+        video_info["Views"] = int(views_match.group(1))
+
+    # Parse Likes
+    likes_match = re.search(r"Likes\s+(\d+)", output)
+    if likes_match:
+        video_info["Likes"] = int(likes_match.group(1))
+
+    # Parse Uploader
+    uploader_match = re.search(r"Uploader\s+(.+)", output)
+    if uploader_match:
+        video_info["Uploader"] = uploader_match.group(1)
+
+    return video_info
+
+
+def show_video_section():
+    st.markdown('<div class="sub-header">Video Analysis</div>', unsafe_allow_html=True)
+
+    # Input for video identifier
+    video_identifier = st.text_input(
+        "Enter Bilibili Video URL or BVID",
+        placeholder="https://www.bilibili.com/video/BV... or BV...",
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        browser = st.selectbox(
+            "Browser for authentication (optional)", ["None", "Chrome", "Firefox"]
+        )
+
+    with col2:
+        content_types = st.multiselect(
+            "Content to include",
+            ["subtitles", "comments", "uploader"],
+            default=["subtitles", "uploader"],
+        )
+
+    # Action buttons
+    col1, col2 = st.columns(2)
+
+    with col1:
+        info_button = st.button("Get Video Info", type="primary")
+
+    with col2:
+        text_button = st.button("Get Video Text", type="primary")
+
+    # Show results
+    if video_identifier:
+        if info_button:
+            with st.spinner("Fetching video information..."):
+                browser_arg = None if browser == "None" else browser.lower()
+                output = get_video_info(video_identifier, browser_arg)
+
+                if output:
+                    st.markdown(
+                        '<div class="result-container">', unsafe_allow_html=True
+                    )
+                    st.subheader("Video Information")
+                    video_info = parse_video_info(output)
+
+                    if video_info:
+                        # Display in two columns
+                        col1, col2 = st.columns(2)
+                        keys = list(video_info.keys())
+                        mid = len(keys) // 2
+
+                        for i, key in enumerate(keys):
+                            if i < mid:
+                                col1.metric(key, video_info[key])
+                            else:
+                                col2.metric(key, video_info[key])
+
+                    # Show raw output in expander
+                    with st.expander("View Raw Output"):
+                        st.text(output)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+        if text_button:
+            with st.spinner("Fetching video text content..."):
+                browser_arg = None if browser == "None" else browser.lower()
+                content_arg = (
+                    ",".join(content_types) if content_types else "subtitles,uploader"
+                )
+
+                # Create a temporary file to save the output
+                temp_output = (
+                    f"temp_output_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
+                )
+                output = get_video_text(
+                    video_identifier, content_arg, browser_arg, temp_output
+                )
+
+                st.markdown('<div class="result-container">', unsafe_allow_html=True)
+                st.subheader("Video Text Content")
+
+                # Read the content of the saved file
+                try:
+                    if os.path.exists(temp_output):
+                        with open(temp_output, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        st.text_area("Text Content", content, height=400)
+
+                        # Provide download button
+                        st.download_button(
+                            label="Download Text Content",
+                            data=content,
+                            file_name=f"bilibili_content_{video_identifier}.txt",
+                            mime="text/plain",
+                        )
+
+                        # Clean up
+                        os.remove(temp_output)
+                    else:
+                        st.warning("No text content was saved.")
+                except Exception as e:
+                    st.error(f"Error reading content: {str(e)}")
+
+                st.markdown("</div>", unsafe_allow_html=True)
+
+
+def show_user_section():
+    st.markdown('<div class="sub-header">User Analysis</div>', unsafe_allow_html=True)
+
+    # Input for user identifier
+    user_identifier = st.text_input("Enter Bilibili User UID", placeholder="12345678")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        browser = st.selectbox(
+            "Browser for authentication (optional)",
+            ["None", "Chrome", "Firefox"],
+            key="user_browser",
+        )
+
+    with col2:
+        subtitle_limit = st.number_input(
+            "Subtitle Limit (optional)",
+            min_value=0,
+            value=0,
+            help="Limit the number of videos to process (0 = no limit)",
+        )
+
+    with col3:
+        st.write("Options")
+        no_description = st.checkbox("No Description")
+        no_meta_info = st.checkbox("No Meta Info")
+
+    # Action button
+    export_button = st.button("Export User Subtitles", type="primary")
+
+    # Show results
+    if user_identifier and export_button:
+        with st.spinner("Exporting user subtitles... This may take a while."):
+            browser_arg = None if browser == "None" else browser.lower()
+            subtitle_limit_arg = None if subtitle_limit == 0 else subtitle_limit
+
+            # Create output directory if it doesn't exist
+            output_dir = Path(f"user_{user_identifier}")
+            output_dir.mkdir(exist_ok=True)
+            output_file = output_dir / "all_subtitles.txt"
+
+            output = export_user_subtitles(
+                user_identifier,
+                browser_arg,
+                subtitle_limit_arg,
+                no_description,
+                no_meta_info,
+                str(output_file),
+            )
+
+            if output:
+                st.markdown('<div class="result-container">', unsafe_allow_html=True)
+                st.success(
+                    f"Successfully exported subtitles for user {user_identifier}"
+                )
+
+                # Check if the file exists
+                if output_file.exists():
+                    # Show a preview of the file
+                    with open(output_file, "r", encoding="utf-8") as f:
+                        content = f.read(10000)  # First 10000 characters
+
+                    st.text_area("Preview of Subtitles", content, height=300)
+
+                    # Provide download button
+                    with open(output_file, "r", encoding="utf-8") as f:
+                        full_content = f.read()
+
+                    st.download_button(
+                        label="Download Full Subtitles",
+                        data=full_content,
+                        file_name=f"user_{user_identifier}_subtitles.txt",
+                        mime="text/plain",
+                    )
+
+                    # Show stats if available
+                    stats_file = output_dir / "stats.txt"
+                    if stats_file.exists():
+                        with open(stats_file, "r", encoding="utf-8") as f:
+                            stats_content = f.read()
+
+                        with st.expander("View Processing Statistics"):
+                            st.text(stats_content)
+
+                st.markdown("</div>", unsafe_allow_html=True)
+
+
+def main():
+    # Main header
+    st.markdown(
+        '<div class="main-header">Bilibili Analyzer</div>', unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="info-text">A powerful tool to analyze Bilibili videos and users</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Sidebar
+    st.sidebar.title("Bilibili Analyzer")
+    st.sidebar.markdown("---")
+    st.sidebar.info(
+        """
+        This app provides a user-friendly interface for the Bilibili Analyzer tool.
+        
+        [View on GitHub](https://github.com/your-username/bilibili-analyzer)
+        """
+    )
+    st.sidebar.markdown("---")
+    st.sidebar.caption("© 2025 Bilibili Analyzer")
+
+    # Create tabs
+    tab1, tab2 = st.tabs(["Video Analysis", "User Analysis"])
+
+    with tab1:
+        show_video_section()
+
+    with tab2:
+        show_user_section()
+
+
+if __name__ == "__main__":
+    main()

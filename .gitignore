@@ -5,3 +5,8 @@ __pycache__/
 *.txt
 *.srt
 *.xml
+
+# Streamlit specific
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+.streamlit/*.json

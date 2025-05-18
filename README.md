@@ -279,3 +279,37 @@ For video text content, it will include:
 - Some videos require authentication for subtitle access
 - Whisper transcription quality varies depending on audio quality
 - LLM post-processing requires a valid API key and connection
+
+# Streamlit Web Interface
+
+The project now includes a beautiful Streamlit web interface for easier use of the Bilibili Analyzer.
+
+## Starting the Streamlit App
+
+Since the project uses Poetry for dependency management, you can start the Streamlit app directly after installing dependencies:
+
+```bash
+# After running poetry install
+poetry run streamlit run app.py
+```
+
+Or run it directly after activating the Poetry environment:
+
+```bash
+# After activating the environment
+streamlit run app.py
+```
+
+## Streamlit App Features
+
+The Streamlit interface provides a user-friendly way to use the Bilibili Analyzer:
+
+- **Video Analysis**: Fetch information and text content from Bilibili videos
+- **User Analysis**: Export subtitles from a user's videos
+- **Visualizations**: Generate charts and graphs to analyze a user's content
+- **Settings**: Configure default options for the application
+- **Help**: Access comprehensive documentation
+
+## Screenshots
+
+![Bilibili Analyzer Streamlit Interface](https://i.imgur.com/placeholder.png)
