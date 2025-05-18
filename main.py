@@ -72,7 +72,19 @@ def display_video_info(video: VideoInfo):
     table.add_row("Upload Time", video.upload_time)
     table.add_row("Uploader", f"{video.owner_name} (UID: {video.owner_mid})")
 
-    console.print(table)
+    # Add charging information if it's a charging exclusive video
+    if video.is_charging_exclusive:
+        table.add_row(
+            "Charging Status", "[bold red]Charging Exclusive Content[/bold red]"
+        )
+        if video.charging_level:
+            table.add_row("Charging Level", video.charging_level)
+        console.print(table)
+        console.print(
+            "[yellow]Warning: This video requires payment for full access. Only a preview may be available.[/yellow]"
+        )
+    else:
+        console.print(table)
 
 
 def display_user_videos(videos: list[VideoInfo]):
@@ -184,6 +196,17 @@ async def main():
         "--no-meta-info",
         action="store_true",
         help="Do not include meta info (title, views, coins, etc.) in the header of each video in exported subtitles",
+    )
+    # Add charging video related options
+    parser.add_argument(
+        "--force-charging",
+        action="store_true",
+        help="Force download attempt even if video is detected as charging exclusive content",
+    )
+    parser.add_argument(
+        "--skip-charging",
+        action="store_true",
+        help="Skip charging exclusive videos completely (default is to warn and download preview)",
     )
     # Add credential management options
     parser.add_argument(
@@ -397,6 +420,8 @@ async def main():
                 limit=subtitle_limit,
                 include_description=include_description,
                 include_meta_info=include_meta_info,
+                force_charging=args.force_charging,
+                skip_charging=args.skip_charging,
             )
 
             # Save to file
@@ -539,7 +564,11 @@ async def main():
 
                 # Get video text content with unified subtitle extraction
                 content = await client.get_video_text_content(
-                    args.identifier, config, browser=args.browser
+                    args.identifier,
+                    config,
+                    browser=args.browser,
+                    force_charging=args.force_charging,
+                    skip_charging=args.skip_charging,
                 )
 
                 # Save or display the content
@@ -570,5 +599,29 @@ async def main():
         rprint(f"[red]Error:[/red] {str(e)}")
 
 
+def cleanup_environment_variables():
+    """Clean up all environment variables set during the program run"""
+    # Charging related environment variables
+    charging_vars = [
+        "CHARGING_WARNING_SHOWN",
+        "CHARGING_CONFIRMED",
+        "CHARGING_DECISION_MADE",
+        "CHARGING_DOWNLOAD_ALL",
+        "CHARGING_SKIP_ALL",
+    ]
+
+    for var in charging_vars:
+        if var in os.environ:
+            del os.environ[var]
+
+    # Export related environment variables
+    if "export_user_subtitles" in os.environ:
+        del os.environ["export_user_subtitles"]
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        # Always clean up environment variables
+        cleanup_environment_variables()

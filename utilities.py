@@ -293,6 +293,9 @@ def download_with_ytdlp(
     download_type: str = "audio",
     credentials=None,  # Keeping parameter for backward compatibility
     browser=None,
+    video_info=None,  # VideoInfo object for detecting charging content
+    force_charging=False,  # Force download attempt for charging videos
+    skip_charging=False,  # Skip charging videos entirely
 ):
     """Download media from a Bilibili video using yt-dlp.
 
@@ -302,8 +305,43 @@ def download_with_ytdlp(
         download_type: 'audio', 'subtitles', or 'all'
         credentials: Deprecated, use browser parameter instead
         browser: Browser to extract cookies from (e.g., 'chrome', 'firefox')
+        video_info: VideoInfo object for detecting charging content
+        force_charging: Force download attempt for charging videos
+        skip_charging: Skip charging videos entirely
     """
     console = Console()
+
+    # Check if video is charging exclusive content - OUTSIDE any progress/status indicators
+    if video_info and video_info.is_charging_exclusive:
+        # Check global charging video decisions
+        if os.environ.get("CHARGING_SKIP_ALL") == "1" or skip_charging:
+            print(
+                f"Skipping charging exclusive video: {video_info.title} (BVID: {video_info.bvid})"
+            )
+            return
+
+        # If force download is set or global decision to download all has been made
+        if force_charging or os.environ.get("CHARGING_DOWNLOAD_ALL") == "1":
+            print("Proceeding with download as per user settings...")
+        # If user has explicitly made a decision (in bilibili_client.py), we don't need to ask again
+        elif os.environ.get("CHARGING_DECISION_MADE") == "1":
+            # This shouldn't happen, but just in case
+            print("Proceeding based on previous decision...")
+        # Don't ask again if we've already asked about this exact operation
+        elif os.environ.get("CHARGING_CONFIRMED") == "1":
+            print("Proceeding with download...")
+        else:
+            # We should no longer get here since all decisions are made in bilibili_client.py
+            # but keep as a fallback
+            print("\n" + "=" * 80)
+            print(
+                f"Warning: '{video_info.title}' is a charging exclusive video ({video_info.charging_level})."
+            )
+            print("Only preview content (~1 minute) will be available without payment.")
+            print("=" * 80)
+            print("Download cancelled as no charging decision was made.")
+            return
+
     cmd = ["yt-dlp"]
 
     # Skip actual video/audio download if only subtitles are requested
@@ -312,7 +350,9 @@ def download_with_ytdlp(
 
     # Add format specification based on download type
     if download_type in ["audio", "all"]:
-        cmd.extend(["-f", "ba"])
+        # Using 'bestaudio' instead of 'ba' which is more flexible
+        # Also add fallback formats in case 'bestaudio' is not available
+        cmd.extend(["-f", "bestaudio/audio/16/32/64/80"])
 
     # Add subtitles option if requested
     if download_type in ["subtitles", "all"]:
@@ -354,27 +394,41 @@ def download_with_ytdlp(
         cmd.append("-q")
 
     # Create status message based on download type
-    status_message = f"[bold cyan]Downloading {download_type}...[/bold cyan]"
+    status_message = f"Downloading {download_type}..."
 
     # Run the command with status indicator
     try:
-        with console.status(status_message, spinner="dots") as status:
-            subprocess.run(cmd, check=True)
-            status.update(
-                f"[bold green]{download_type.capitalize()} download complete.[/bold green]"
-            )
+        print(f"\n{status_message}")
+        subprocess.run(cmd, check=True)
+        print(f"{download_type.capitalize()} download complete.")
+
+        # Verify download completeness for charging videos
+        if (
+            video_info
+            and video_info.is_charging_exclusive
+            and output_path
+            and download_type in ["audio", "all"]
+        ):
+            if os.path.exists(output_path):
+                is_complete = verify_download_completeness(
+                    output_path, video_info.duration
+                )
+                if not is_complete:
+                    print(
+                        f"Warning: Downloaded content is incomplete ({video_info.title}). Only preview content is available without payment."
+                    )
     except subprocess.CalledProcessError as e:
         # Provide more context in error messages to help debugging
         if download_type == "subtitles" and not browser:
-            rprint(
-                f"[red]yt-dlp subtitle download failed. You might need authentication with --browser.[/red]"
+            print(
+                f"yt-dlp subtitle download failed. You might need authentication with --browser."
             )
         elif download_type == "audio" and not browser:
-            rprint(
-                f"[red]yt-dlp audio download failed. You might need authentication with --browser.[/red]"
+            print(
+                f"yt-dlp audio download failed. You might need authentication with --browser."
             )
         else:
-            rprint(f"[red]yt-dlp download failed with error code {e.returncode}[/red]")
+            print(f"yt-dlp download failed with error code {e.returncode}")
         raise
 
 
@@ -413,6 +467,48 @@ def remove_timestamps(subtitle_text: str) -> str:
     result = re.sub(r"\n{3,}", "\n\n", result)
 
     return result.strip()
+
+
+def verify_download_completeness(
+    filepath: str, expected_duration: int, threshold_ratio: float = 0.9
+) -> bool:
+    """Verify if the downloaded media is complete by checking its duration against expected duration.
+
+    This is particularly useful for detecting partial downloads of charging exclusive videos.
+
+    Args:
+        filepath: Path to the downloaded media file
+        expected_duration: Expected duration in seconds from video metadata
+        threshold_ratio: Ratio of expected duration to consider download complete (default: 0.9)
+
+    Returns:
+        bool: True if download is complete, False if it's partial
+    """
+    if not os.path.exists(filepath):
+        logger.debug(f"File does not exist: {filepath}")
+        return False
+
+    try:
+        # Use yt-dlp to get duration information
+        cmd = ["yt-dlp", "--skip-download", "--print", "duration", filepath]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        # Parse duration
+        file_duration = float(result.stdout.strip())
+        logger.debug(f"File duration: {file_duration}s, Expected: {expected_duration}s")
+
+        # Check if file duration is significantly shorter than expected
+        # For charging videos, typically only 1 minute is available for free
+        if file_duration < expected_duration * threshold_ratio:
+            logger.debug(
+                f"Downloaded file appears to be partial: {file_duration}s vs expected {expected_duration}s"
+            )
+            return False
+
+        return True
+    except (subprocess.CalledProcessError, ValueError) as e:
+        logger.debug(f"Error verifying download completeness: {str(e)}")
+        return False
 
 
 def format_subtitle_header(

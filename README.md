@@ -172,6 +172,8 @@ user_12345678/
 | `--subtitle-limit` | Limit the number of videos to process when exporting subtitles |
 | `--no-description` | Don't include video descriptions in exported subtitles |
 | `--no-meta-info` | Don't include meta info (title, views, coins, etc.) in the header of each video in exported subtitles |
+| `--force-charging` | Force download attempt for charging exclusive videos without confirmation prompts |
+| `--skip-charging` | Skip charging exclusive videos completely when batch processing |
 
 ## Auto-Detection
 
@@ -179,6 +181,31 @@ The tool automatically detects if the identifier is a user UID or a video BVID/U
 - If the identifier is a purely numeric value with 10 or fewer digits, it's treated as a user UID
 - Otherwise, it's treated as a video BVID or URL
 - The `--user` flag can be used to override this detection and force user mode
+
+# Handling Charging Exclusive Videos
+
+The tool detects Bilibili's charging exclusive videos (付费充电视频) which require payment for full access:
+
+```bash
+# Video info will show charging status
+python main.py BV1xx411c7mD
+```
+
+When downloading charging exclusive videos:
+- By default, the tool warns you that only a preview (typically ~1 minute) is available
+- You can choose to continue with the limited content or cancel the download
+- After downloading, the tool verifies if the content is complete or truncated
+
+Options for handling charging videos:
+```bash
+# Skip charging videos entirely when batch processing
+python main.py 12345678 --export-user-subtitles --skip-charging
+
+# Force download attempts without confirmation prompts
+python main.py 12345678 --export-user-subtitles --force-charging
+```
+
+Note: These options do not bypass Bilibili's content protection. You will still only get the free preview portion without proper payment.
 
 ## Logging and Debug Output
 

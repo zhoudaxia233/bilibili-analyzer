@@ -51,6 +51,10 @@ class VideoInfo(BaseModel):
     owner_name: str = Field(..., description="Uploader's name")
     owner_mid: int = Field(..., description="Uploader's ID")
     comment_count: int = Field(..., description="Comment count")
+    is_charging_exclusive: bool = Field(
+        False, description="Whether the video is charging exclusive content"
+    )
+    charging_level: str = Field("", description="Charging level info")
 
 
 class VideoTextConfig(BaseModel):
@@ -253,6 +257,28 @@ class BilibiliClient:
         v = video.Video(bvid=bvid)
         info = await v.get_info()
 
+        # Check for charging fields
+        is_charging = False
+        charging_level = ""
+
+        # Check traditional charging field
+        if "charge" in info:
+            is_charging = info["charge"].get("charge_type", 0) == 1
+            if is_charging:
+                charging_level = info["charge"].get("charge_level", "")
+
+        # Also check the new upower fields (for newer API responses)
+        if not is_charging and "is_upower_exclusive" in info:
+            is_charging = info.get("is_upower_exclusive", False)
+            if is_charging:
+                charging_level = "UPower Exclusive"
+
+        # Also check the preview field
+        if not is_charging and "is_upower_preview" in info:
+            is_charging = info.get("is_upower_preview", False)
+            if is_charging:
+                charging_level = "UPower Preview"
+
         return VideoInfo(
             bvid=info["bvid"],
             title=info["title"],
@@ -267,6 +293,8 @@ class BilibiliClient:
             owner_name=info["owner"]["name"],
             owner_mid=info["owner"]["mid"],
             comment_count=info["stat"]["reply"],
+            is_charging_exclusive=is_charging,
+            charging_level=charging_level,
         )
 
     async def get_user_videos(
@@ -306,6 +334,29 @@ class BilibiliClient:
         async def fetch_video_info(bvid):
             v = video.Video(bvid=bvid)
             info = await v.get_info()
+
+            # Check for charging fields
+            is_charging = False
+            charging_level = ""
+
+            # Check traditional charging field
+            if "charge" in info:
+                is_charging = info["charge"].get("charge_type", 0) == 1
+                if is_charging:
+                    charging_level = info["charge"].get("charge_level", "")
+
+            # Also check the new upower fields (for newer API responses)
+            if not is_charging and "is_upower_exclusive" in info:
+                is_charging = info.get("is_upower_exclusive", False)
+                if is_charging:
+                    charging_level = "UPower Exclusive"
+
+            # Also check the preview field
+            if not is_charging and "is_upower_preview" in info:
+                is_charging = info.get("is_upower_preview", False)
+                if is_charging:
+                    charging_level = "UPower Preview"
+
             return VideoInfo(
                 bvid=info["bvid"],
                 title=info["title"],
@@ -320,6 +371,8 @@ class BilibiliClient:
                 owner_name=info["owner"]["name"],
                 owner_mid=info["owner"]["mid"],
                 comment_count=info["stat"]["reply"],
+                is_charging_exclusive=is_charging,
+                charging_level=charging_level,
             )
 
         # Use asyncio.gather for concurrency
@@ -462,6 +515,8 @@ class BilibiliClient:
         identifier: str,
         config: Optional[VideoTextConfig] = None,
         browser: Optional[str] = None,
+        force_charging: bool = False,
+        skip_charging: bool = False,
     ) -> VideoTextContent:
         """Get video text content in markdown format
 
@@ -469,6 +524,8 @@ class BilibiliClient:
             identifier: A Bilibili video URL or BVID
             config: Configuration for text content extraction
             browser: Browser to extract cookies from for authentication (e.g., 'chrome', 'firefox')
+            force_charging: Force download attempt for charging videos
+            skip_charging: Skip charging videos entirely
 
         Returns:
             VideoTextContent object containing markdown formatted text
@@ -483,6 +540,130 @@ class BilibiliClient:
         v = video.Video(bvid=bvid, credential=self.credential)
         info = await v.get_info()
         logger.debug(f"Video info: bvid={bvid}, cid={info.get('cid')}")
+
+        # Create VideoInfo object to check for charging content
+        # Check for charging fields
+        is_charging = False
+        charging_level = ""
+
+        # Check traditional charging field
+        if "charge" in info:
+            is_charging = info["charge"].get("charge_type", 0) == 1
+            if is_charging:
+                charging_level = info["charge"].get("charge_level", "")
+
+        # Also check the new upower fields (for newer API responses)
+        if not is_charging and "is_upower_exclusive" in info:
+            is_charging = info.get("is_upower_exclusive", False)
+            if is_charging:
+                charging_level = "UPower Exclusive"
+
+        # Also check the preview field
+        if not is_charging and "is_upower_preview" in info:
+            is_charging = info.get("is_upower_preview", False)
+            if is_charging:
+                charging_level = "UPower Preview"
+
+        video_info = VideoInfo(
+            bvid=info["bvid"],
+            title=info["title"],
+            description=info["desc"],
+            duration=info["duration"],
+            view_count=info["stat"]["view"],
+            like_count=info["stat"]["like"],
+            coin_count=info["stat"]["coin"],
+            favorite_count=info["stat"]["favorite"],
+            share_count=info["stat"]["share"],
+            upload_time=self._format_timestamp(info["pubdate"]),
+            owner_name=info["owner"]["name"],
+            owner_mid=info["owner"]["mid"],
+            comment_count=info["stat"]["reply"],
+            is_charging_exclusive=is_charging,
+            charging_level=charging_level,
+        )
+
+        # Check for charging exclusive videos upfront
+        if video_info.is_charging_exclusive:
+            # Set a flag in the environment that will be checked by all download functions
+            charging_video_encountered = True
+
+            # Check if we're in batch mode (export_user_subtitles)
+            in_batch_mode = "export_user_subtitles" in os.environ
+
+            # Only show warnings when not in batch mode as batch mode handles its own warnings
+            if not in_batch_mode:
+                # Stop any progress spinners before showing warnings
+                console.print()  # Ensure clean line
+                console.print(
+                    f"[yellow]Warning: '{video_info.title}' is a charging exclusive video ({video_info.charging_level}).[/yellow]"
+                )
+                console.print(
+                    "[yellow]Only preview content (~1 minute) will be available without payment.[/yellow]"
+                )
+
+                # Ask user for global decision on charging videos
+                if (
+                    not skip_charging
+                    and not force_charging
+                    and os.environ.get("CHARGING_DECISION_MADE") != "1"
+                ):
+                    console.print()
+                    console.print(
+                        "[cyan]How would you like to handle this and all future charging videos?[/cyan]"
+                    )
+                    while True:
+                        print(
+                            "Options: (d)ownload all or (s)kip all: ",
+                            end="",
+                            flush=True,
+                        )
+                        try:
+                            response = input().strip().lower()
+                            if response in ("d", "download"):
+                                console.print(
+                                    "[green]Proceeding with all charging videos.[/green]"
+                                )
+                                force_charging = True
+                                os.environ["CHARGING_DECISION_MADE"] = "1"
+                                os.environ["CHARGING_DOWNLOAD_ALL"] = "1"
+                                break
+                            elif response in ("s", "skip"):
+                                console.print(
+                                    "[yellow]Skipping all charging videos.[/yellow]"
+                                )
+                                skip_charging = True
+                                os.environ["CHARGING_DECISION_MADE"] = "1"
+                                os.environ["CHARGING_SKIP_ALL"] = "1"
+                                break
+                            else:
+                                print("Please enter 'd' or 's'.")
+                        except (KeyboardInterrupt, EOFError):
+                            console.print(
+                                "\n[yellow]Operation cancelled. Skipping all charging videos.[/yellow]"
+                            )
+                            skip_charging = True
+                            os.environ["CHARGING_DECISION_MADE"] = "1"
+                            os.environ["CHARGING_SKIP_ALL"] = "1"
+                            break
+                        except Exception as e:
+                            print(f"Error reading input: {e}")
+
+            # Check if the user has made a decision to skip all charging videos
+            if os.environ.get("CHARGING_SKIP_ALL") == "1":
+                skip_charging = True
+
+            # Check if the user has made a decision to download all charging videos
+            if os.environ.get("CHARGING_DOWNLOAD_ALL") == "1":
+                force_charging = True
+
+            if skip_charging:
+                raise ValueError(
+                    f"Skipping charging exclusive video: {video_info.title}"
+                )
+
+            # Set an environment variable to indicate the warning was already shown
+            # This will be used in download_with_ytdlp to avoid duplicate warnings
+            os.environ["CHARGING_WARNING_SHOWN"] = "1"
 
         # Basic info is always included
         basic_info = await self._format_basic_info(info)
@@ -542,17 +723,17 @@ class BilibiliClient:
                             "[cyan]API subtitle extraction failed. Trying yt-dlp...[/cyan]"
                         )
 
-                        # Use a progress indicator for subtitle download
-                        with console.status(
-                            "[bold cyan]Downloading subtitles with yt-dlp...[/bold cyan]",
-                            spinner="dots",
-                        ):
-                            download_with_ytdlp(
-                                url=url,
-                                output_path=str(base_dir / bvid),
-                                download_type="subtitles",
-                                browser=browser,  # Browser cookie will be extracted once and cached
-                            )
+                        # Use download_with_ytdlp directly without our own status indicator
+                        # since the function now has its own status handling
+                        download_with_ytdlp(
+                            url=url,
+                            output_path=str(base_dir / bvid),
+                            download_type="subtitles",
+                            browser=browser,  # Browser cookie will be extracted once and cached
+                            video_info=video_info,
+                            force_charging=force_charging,
+                            skip_charging=skip_charging,
+                        )
 
                         # Check if subtitles were downloaded
                         subtitle_files = list(base_dir.glob("*.vtt")) + list(
@@ -635,6 +816,11 @@ class BilibiliClient:
                             output_path=str(audio_path),
                             download_type="audio",
                             browser=browser,  # Browser cookie will be reused from cache
+                            video_info=video_info,
+                            force_charging=force_charging
+                            or os.environ.get("CHARGING_CONFIRMED")
+                            == "1",  # Use previous confirmation
+                            skip_charging=skip_charging,
                         )
 
                         if not audio_path.exists() or audio_path.stat().st_size == 0:
@@ -788,12 +974,23 @@ class BilibiliClient:
                                 f"All subtitle extraction methods failed despite authentication. Error: {str(e)}"
                             )
 
-        return VideoTextContent(
+        # Will reach here if a valid subtitles source was found or all methods failed
+        result = VideoTextContent(
             basic_info=basic_info,
             uploader_info=uploader_info,
             tags_and_categories=tags_and_categories,
             subtitles=subtitles,
         )
+
+        # Clean up environment variables
+        if "CHARGING_WARNING_SHOWN" in os.environ:
+            del os.environ["CHARGING_WARNING_SHOWN"]
+        if "CHARGING_CONFIRMED" in os.environ:
+            del os.environ["CHARGING_CONFIRMED"]
+        # Keep the decision variables for future calls in the same session
+        # These will be cleaned up at the program end
+
+        return result
 
     async def retry_llm_processing(self, identifier: str) -> str:
         """Retry LLM post-processing for an existing Whisper transcript.
@@ -996,6 +1193,8 @@ class BilibiliClient:
         limit: Optional[int] = None,
         include_description: bool = True,
         include_meta_info: bool = True,
+        force_charging: bool = False,
+        skip_charging: bool = False,
     ) -> tuple[str, dict]:
         """Get subtitles from all videos of a user and combine them into a single text file.
 
@@ -1072,6 +1271,11 @@ class BilibiliClient:
         # This will be used in exception handling to suggest the right command
         os.environ["export_user_subtitles"] = str(uid)
 
+        # Pre-set charging confirmation for batch mode to avoid prompts
+        if force_charging:
+            os.environ["CHARGING_WARNING_SHOWN"] = "1"
+            os.environ["CHARGING_CONFIRMED"] = "1"
+
         try:
             # Create text content config that only includes subtitles
             config = VideoTextConfig(
@@ -1106,9 +1310,78 @@ class BilibiliClient:
                     )
 
                     try:
+                        # Check if video is charging exclusive before trying to download
+                        if video.is_charging_exclusive:
+                            # Stop progress display temporarily
+                            progress.stop()
+                            console.print()  # Clear line
+                            console.print(
+                                f"[yellow]Warning: '{video.title}' is a charging exclusive video ({video.charging_level}).[/yellow]"
+                            )
+                            console.print(
+                                "[yellow]Only preview content (~1 minute) will be available without payment.[/yellow]"
+                            )
+
+                            if skip_charging:
+                                console.print(
+                                    f"[yellow]Skipping charging video: {video.title}[/yellow]"
+                                )
+                                # Resume progress display
+                                progress.start()
+                                stats["processed_videos"] += 1
+                                stats["subtitle_sources"]["failed"] += 1
+                                header = format_subtitle_header(
+                                    video, include_description, config.include_meta_info
+                                )
+                                all_subtitles.append(f"{header}\n\n[跳过付费视频]")
+                                progress.advance(task)
+                                continue
+
+                            if not force_charging:
+                                # Ask for confirmation with plain input
+                                print(
+                                    "\nContinue with this and all future charging videos? (y=all/n=none): ",
+                                    end="",
+                                    flush=True,
+                                )
+                                response = input().strip().lower()
+
+                                if response in ("y", "yes"):
+                                    console.print(
+                                        "[green]Proceeding with all charging videos from now on.[/green]"
+                                    )
+                                    force_charging = True
+                                    os.environ["CHARGING_WARNING_SHOWN"] = "1"
+                                    os.environ["CHARGING_CONFIRMED"] = "1"
+                                else:
+                                    console.print(
+                                        "[yellow]Skipping all charging videos from now on.[/yellow]"
+                                    )
+                                    # Skip all charging videos from now on
+                                    skip_charging = True
+                                    # Resume progress display
+                                    progress.start()
+                                    stats["processed_videos"] += 1
+                                    stats["subtitle_sources"]["failed"] += 1
+                                    header = format_subtitle_header(
+                                        video,
+                                        include_description,
+                                        config.include_meta_info,
+                                    )
+                                    all_subtitles.append(f"{header}\n\n[跳过付费视频]")
+                                    progress.advance(task)
+                                    continue
+
+                            # Resume progress display
+                            progress.start()
+
                         # Get video content with subtitles
                         content = await self.get_video_text_content(
-                            video.bvid, config=config, browser=browser
+                            video.bvid,
+                            config=config,
+                            browser=browser,
+                            force_charging=force_charging,
+                            skip_charging=skip_charging,
                         )
 
                         # Update processed count
@@ -1168,6 +1441,8 @@ class BilibiliClient:
 
                         # Check if it's an authentication error
                         if "Authentication required" in error_message:
+                            # Stop progress display before exiting
+                            progress.stop()
                             # Re-raise to exit the entire process
                             raise
 
@@ -1220,3 +1495,8 @@ class BilibiliClient:
             # Clean up the environment variable
             if "export_user_subtitles" in os.environ:
                 del os.environ["export_user_subtitles"]
+            # Clean up charging-related environment variables
+            if "CHARGING_WARNING_SHOWN" in os.environ:
+                del os.environ["CHARGING_WARNING_SHOWN"]
+            if "CHARGING_CONFIRMED" in os.environ:
+                del os.environ["CHARGING_CONFIRMED"]
