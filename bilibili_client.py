@@ -517,6 +517,7 @@ class BilibiliClient:
         browser: Optional[str] = None,
         force_charging: bool = False,
         skip_charging: bool = False,
+        in_batch_mode: bool = False,
     ) -> VideoTextContent:
         """Get video text content in markdown format
 
@@ -526,6 +527,7 @@ class BilibiliClient:
             browser: Browser to extract cookies from for authentication (e.g., 'chrome', 'firefox')
             force_charging: Force download attempt for charging videos
             skip_charging: Skip charging videos entirely
+            in_batch_mode: Whether this is being called in batch mode (e.g. from get_all_user_subtitles)
 
         Returns:
             VideoTextContent object containing markdown formatted text
@@ -584,11 +586,8 @@ class BilibiliClient:
 
         # Check for charging exclusive videos upfront
         if video_info.is_charging_exclusive:
-            # Set a flag in the environment that will be checked by all download functions
-            charging_video_encountered = True
-
             # Check if we're in batch mode (export_user_subtitles)
-            in_batch_mode = "export_user_subtitles" in os.environ
+            # in_batch_mode = "export_user_subtitles" in os.environ
 
             # Only show warnings when not in batch mode as batch mode handles its own warnings
             if not in_batch_mode:
@@ -602,11 +601,7 @@ class BilibiliClient:
                 )
 
                 # Ask user for global decision on charging videos
-                if (
-                    not skip_charging
-                    and not force_charging
-                    and os.environ.get("CHARGING_DECISION_MADE") != "1"
-                ):
+                if not skip_charging and not force_charging:
                     console.print()
                     console.print(
                         "[cyan]How would you like to handle this and all future charging videos?[/cyan]"
@@ -624,16 +619,12 @@ class BilibiliClient:
                                     "[green]Proceeding with all charging videos.[/green]"
                                 )
                                 force_charging = True
-                                os.environ["CHARGING_DECISION_MADE"] = "1"
-                                os.environ["CHARGING_DOWNLOAD_ALL"] = "1"
                                 break
                             elif response in ("s", "skip"):
                                 console.print(
                                     "[yellow]Skipping all charging videos.[/yellow]"
                                 )
                                 skip_charging = True
-                                os.environ["CHARGING_DECISION_MADE"] = "1"
-                                os.environ["CHARGING_SKIP_ALL"] = "1"
                                 break
                             else:
                                 print("Please enter 'd' or 's'.")
@@ -642,28 +633,14 @@ class BilibiliClient:
                                 "\n[yellow]Operation cancelled. Skipping all charging videos.[/yellow]"
                             )
                             skip_charging = True
-                            os.environ["CHARGING_DECISION_MADE"] = "1"
-                            os.environ["CHARGING_SKIP_ALL"] = "1"
                             break
                         except Exception as e:
                             print(f"Error reading input: {e}")
-
-            # Check if the user has made a decision to skip all charging videos
-            if os.environ.get("CHARGING_SKIP_ALL") == "1":
-                skip_charging = True
-
-            # Check if the user has made a decision to download all charging videos
-            if os.environ.get("CHARGING_DOWNLOAD_ALL") == "1":
-                force_charging = True
 
             if skip_charging:
                 raise ValueError(
                     f"Skipping charging exclusive video: {video_info.title}"
                 )
-
-            # Set an environment variable to indicate the warning was already shown
-            # This will be used in download_with_ytdlp to avoid duplicate warnings
-            os.environ["CHARGING_WARNING_SHOWN"] = "1"
 
         # Basic info is always included
         basic_info = await self._format_basic_info(info)
@@ -777,7 +754,7 @@ class BilibiliClient:
                             command = f"python main.py {bvid} --text --browser chrome"
 
                             # For batch processing, suggest appropriate command
-                            if "export_user_subtitles" in str(e):
+                            if in_batch_mode:
                                 uid = bvid.split("_")[1] if "_" in bvid else "UID"
                                 command = f"python main.py {uid} --export-user-subtitles --browser chrome"
 
@@ -817,9 +794,7 @@ class BilibiliClient:
                             download_type="audio",
                             browser=browser,  # Browser cookie will be reused from cache
                             video_info=video_info,
-                            force_charging=force_charging
-                            or os.environ.get("CHARGING_CONFIRMED")
-                            == "1",  # Use previous confirmation
+                            force_charging=force_charging,
                             skip_charging=skip_charging,
                         )
 
@@ -981,14 +956,6 @@ class BilibiliClient:
             tags_and_categories=tags_and_categories,
             subtitles=subtitles,
         )
-
-        # Clean up environment variables
-        if "CHARGING_WARNING_SHOWN" in os.environ:
-            del os.environ["CHARGING_WARNING_SHOWN"]
-        if "CHARGING_CONFIRMED" in os.environ:
-            del os.environ["CHARGING_CONFIRMED"]
-        # Keep the decision variables for future calls in the same session
-        # These will be cleaned up at the program end
 
         return result
 
@@ -1204,6 +1171,8 @@ class BilibiliClient:
             limit: Maximum number of videos to process (None for all)
             include_description: Whether to include video descriptions in the output
             include_meta_info: Whether to include meta info (title, views, coins, etc.)
+            force_charging: Force download attempt for charging videos
+            skip_charging: Skip charging videos entirely
 
         Returns:
             Tuple of (combined subtitles text, stats dictionary)
@@ -1267,236 +1236,214 @@ class BilibiliClient:
             "subtitle_sources": {"api": 0, "yt-dlp": 0, "whisper": 0, "failed": 0},
         }
 
-        # Add flag to identify this is from export_user_subtitles
-        # This will be used in exception handling to suggest the right command
-        os.environ["export_user_subtitles"] = str(uid)
+        # Flag to identify we're in batch mode for get_video_text_content
+        in_batch_mode = True
 
-        # Pre-set charging confirmation for batch mode to avoid prompts
-        if force_charging:
-            os.environ["CHARGING_WARNING_SHOWN"] = "1"
-            os.environ["CHARGING_CONFIRMED"] = "1"
+        # Create text content config that only includes subtitles
+        config = VideoTextConfig(
+            include_subtitles=True,
+            include_uploader_info=False,
+            include_meta_info=include_meta_info,
+        )
 
-        try:
-            # Create text content config that only includes subtitles
-            config = VideoTextConfig(
-                include_subtitles=True,
-                include_uploader_info=False,
-                include_meta_info=include_meta_info,
-            )
+        all_subtitles = []
 
-            all_subtitles = []
+        # Process videos with progress bar
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("•"),
+            TimeElapsedColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+            console=console,
+            expand=True,
+        ) as progress:
+            task = progress.add_task("[cyan]Processing videos...", total=len(videos))
 
-            # Process videos with progress bar
-            with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TextColumn("•"),
-                TimeElapsedColumn(),
-                TextColumn("•"),
-                TimeRemainingColumn(),
-                console=console,
-                expand=True,
-            ) as progress:
-                task = progress.add_task(
-                    "[cyan]Processing videos...", total=len(videos)
+            for video in videos:
+                # Update progress
+                progress.update(
+                    task,
+                    description=f"[cyan]Processing {video.bvid}: {video.title[:30]}...",
                 )
 
-                for video in videos:
-                    # Update progress
-                    progress.update(
-                        task,
-                        description=f"[cyan]Processing {video.bvid}: {video.title[:30]}...",
-                    )
+                try:
+                    # Check if video is charging exclusive before trying to download
+                    if video.is_charging_exclusive:
+                        # Stop progress display temporarily
+                        progress.stop()
+                        console.print()  # Clear line
+                        console.print(
+                            f"[yellow]Warning: '{video.title}' is a charging exclusive video ({video.charging_level}).[/yellow]"
+                        )
+                        console.print(
+                            "[yellow]Only preview content (~1 minute) will be available without payment.[/yellow]"
+                        )
 
-                    try:
-                        # Check if video is charging exclusive before trying to download
-                        if video.is_charging_exclusive:
-                            # Stop progress display temporarily
-                            progress.stop()
-                            console.print()  # Clear line
+                        if skip_charging:
                             console.print(
-                                f"[yellow]Warning: '{video.title}' is a charging exclusive video ({video.charging_level}).[/yellow]"
+                                f"[yellow]Skipping charging video: {video.title}[/yellow]"
                             )
-                            console.print(
-                                "[yellow]Only preview content (~1 minute) will be available without payment.[/yellow]"
+                            # Resume progress display
+                            progress.start()
+                            stats["processed_videos"] += 1
+                            stats["subtitle_sources"]["failed"] += 1
+                            header = format_subtitle_header(
+                                video, include_description, config.include_meta_info
                             )
+                            all_subtitles.append(f"{header}\n\n[跳过付费视频]")
+                            progress.advance(task)
+                            continue
 
-                            if skip_charging:
+                        if not force_charging:
+                            # Ask for confirmation with plain input
+                            print(
+                                "\nContinue with this and all future charging videos? (y=all/n=none): ",
+                                end="",
+                                flush=True,
+                            )
+                            response = input().strip().lower()
+
+                            if response in ("y", "yes"):
                                 console.print(
-                                    f"[yellow]Skipping charging video: {video.title}[/yellow]"
+                                    "[green]Proceeding with all charging videos from now on.[/green]"
                                 )
+                                force_charging = True
+                            else:
+                                console.print(
+                                    "[yellow]Skipping all charging videos from now on.[/yellow]"
+                                )
+                                # Skip all charging videos from now on
+                                skip_charging = True
                                 # Resume progress display
                                 progress.start()
                                 stats["processed_videos"] += 1
                                 stats["subtitle_sources"]["failed"] += 1
                                 header = format_subtitle_header(
-                                    video, include_description, config.include_meta_info
+                                    video,
+                                    include_description,
+                                    config.include_meta_info,
                                 )
                                 all_subtitles.append(f"{header}\n\n[跳过付费视频]")
                                 progress.advance(task)
                                 continue
 
-                            if not force_charging:
-                                # Ask for confirmation with plain input
-                                print(
-                                    "\nContinue with this and all future charging videos? (y=all/n=none): ",
-                                    end="",
-                                    flush=True,
-                                )
-                                response = input().strip().lower()
+                        # Resume progress display
+                        progress.start()
 
-                                if response in ("y", "yes"):
-                                    console.print(
-                                        "[green]Proceeding with all charging videos from now on.[/green]"
-                                    )
-                                    force_charging = True
-                                    os.environ["CHARGING_WARNING_SHOWN"] = "1"
-                                    os.environ["CHARGING_CONFIRMED"] = "1"
-                                else:
-                                    console.print(
-                                        "[yellow]Skipping all charging videos from now on.[/yellow]"
-                                    )
-                                    # Skip all charging videos from now on
-                                    skip_charging = True
-                                    # Resume progress display
-                                    progress.start()
-                                    stats["processed_videos"] += 1
-                                    stats["subtitle_sources"]["failed"] += 1
-                                    header = format_subtitle_header(
-                                        video,
-                                        include_description,
-                                        config.include_meta_info,
-                                    )
-                                    all_subtitles.append(f"{header}\n\n[跳过付费视频]")
-                                    progress.advance(task)
-                                    continue
+                    # Get video content with subtitles
+                    content = await self.get_video_text_content(
+                        video.bvid,
+                        config=config,
+                        browser=browser,
+                        force_charging=force_charging,
+                        skip_charging=skip_charging,
+                        in_batch_mode=True,
+                    )
 
-                            # Resume progress display
-                            progress.start()
+                    # Update processed count
+                    stats["processed_videos"] += 1
 
-                        # Get video content with subtitles
-                        content = await self.get_video_text_content(
-                            video.bvid,
-                            config=config,
-                            browser=browser,
-                            force_charging=force_charging,
-                            skip_charging=skip_charging,
-                        )
+                    # Check if subtitles were found
+                    if content.subtitles:
+                        # Determine subtitle source from content
+                        subtitle_source = "api"
+                        if "Whisper Transcript" in content.subtitles:
+                            subtitle_source = "whisper"
+                        elif "yt-dlp" in content.subtitles:
+                            subtitle_source = "yt-dlp"
 
-                        # Update processed count
-                        stats["processed_videos"] += 1
+                        # Update stats
+                        stats["videos_with_subtitles"] += 1
+                        stats["subtitle_sources"][subtitle_source] += 1
 
-                        # Check if subtitles were found
-                        if content.subtitles:
-                            # Determine subtitle source from content
-                            subtitle_source = "api"
-                            if "Whisper Transcript" in content.subtitles:
-                                subtitle_source = "whisper"
-                            elif "yt-dlp" in content.subtitles:
-                                subtitle_source = "yt-dlp"
-
-                            # Update stats
-                            stats["videos_with_subtitles"] += 1
-                            stats["subtitle_sources"][subtitle_source] += 1
-
-                            # Format subtitle text
-                            header = format_subtitle_header(
-                                video, include_description, config.include_meta_info
-                            )
-                            subtitle_text = content.subtitles
-
-                            # Remove section headers that might be in markdown
-                            subtitle_text = re.sub(
-                                r"^#+\s*Video Subtitles.*$",
-                                "",
-                                subtitle_text,
-                                flags=re.MULTILINE,
-                            )
-                            subtitle_text = re.sub(
-                                r"^#+\s*Whisper Transcript.*$",
-                                "",
-                                subtitle_text,
-                                flags=re.MULTILINE,
-                            )
-
-                            # Remove timestamps
-                            clean_subtitles = remove_timestamps(subtitle_text)
-
-                            # Add to results
-                            all_subtitles.append(f"{header}\n\n{clean_subtitles}")
-                        else:
-                            # No subtitles found
-                            header = format_subtitle_header(
-                                video, include_description, config.include_meta_info
-                            )
-                            all_subtitles.append(f"{header}\n\n[无字幕]")
-                            stats["subtitle_sources"]["failed"] += 1
-
-                    except Exception as e:
-                        error_message = str(e)
-                        logger.debug(
-                            f"Error processing video {video.bvid}: {error_message}"
-                        )
-
-                        # Check if it's an authentication error
-                        if "Authentication required" in error_message:
-                            # Stop progress display before exiting
-                            progress.stop()
-                            # Re-raise to exit the entire process
-                            raise
-
-                        # Special handling for yt-dlp format errors
-                        if "Requested format is not available" in error_message:
-                            console.print(
-                                f"[yellow]Video {video.bvid} format not available for download, skipping...[/yellow]"
-                            )
-                        # Special handling for deleted or restricted videos
-                        elif (
-                            "This video is unavailable" in error_message
-                            or "has been deleted" in error_message
-                        ):
-                            console.print(
-                                f"[yellow]Video {video.bvid} is unavailable or deleted, skipping...[/yellow]"
-                            )
-                        # General error message for other cases
-                        else:
-                            console.print(
-                                f"[yellow]Error processing video {video.bvid}: {error_message}[/yellow]"
-                            )
-
-                        # Add error message for all errors
+                        # Format subtitle text
                         header = format_subtitle_header(
                             video, include_description, config.include_meta_info
                         )
-                        all_subtitles.append(
-                            f"{header}\n\n[字幕获取失败: {error_message}]"
+                        subtitle_text = content.subtitles
+
+                        # Remove section headers that might be in markdown
+                        subtitle_text = re.sub(
+                            r"^#+\s*Video Subtitles.*$",
+                            "",
+                            subtitle_text,
+                            flags=re.MULTILINE,
                         )
+                        subtitle_text = re.sub(
+                            r"^#+\s*Whisper Transcript.*$",
+                            "",
+                            subtitle_text,
+                            flags=re.MULTILINE,
+                        )
+
+                        # Remove timestamps
+                        clean_subtitles = remove_timestamps(subtitle_text)
+
+                        # Add to results
+                        all_subtitles.append(f"{header}\n\n{clean_subtitles}")
+                    else:
+                        # No subtitles found
+                        header = format_subtitle_header(
+                            video, include_description, config.include_meta_info
+                        )
+                        all_subtitles.append(f"{header}\n\n[无字幕]")
                         stats["subtitle_sources"]["failed"] += 1
 
-                    # Update progress
-                    progress.advance(task)
+                except Exception as e:
+                    error_message = str(e)
+                    logger.debug(
+                        f"Error processing video {video.bvid}: {error_message}"
+                    )
 
-            # Combine all subtitles with double newline between videos
-            combined_text = "\n\n\n".join(all_subtitles)
+                    # Check if it's an authentication error
+                    if "Authentication required" in error_message:
+                        # Stop progress display before exiting
+                        progress.stop()
+                        # Re-raise to exit the entire process
+                        raise
 
-            # Calculate total token count (rough estimate)
-            stats["total_tokens"] = len(combined_text.split()) * 1.5
+                    # Special handling for yt-dlp format errors
+                    if "Requested format is not available" in error_message:
+                        console.print(
+                            f"[yellow]Video {video.bvid} format not available for download, skipping...[/yellow]"
+                        )
+                    # Special handling for deleted or restricted videos
+                    elif (
+                        "This video is unavailable" in error_message
+                        or "has been deleted" in error_message
+                    ):
+                        console.print(
+                            f"[yellow]Video {video.bvid} is unavailable or deleted, skipping...[/yellow]"
+                        )
+                    # General error message for other cases
+                    else:
+                        console.print(
+                            f"[yellow]Error processing video {video.bvid}: {error_message}[/yellow]"
+                        )
 
-            # Display summary
-            console.print(f"[green]Processing complete![/green]")
-            console.print(
-                f"[green]Processed {stats['processed_videos']} videos, found subtitles for {stats['videos_with_subtitles']} videos[/green]"
-            )
+                    # Add error message for all errors
+                    header = format_subtitle_header(
+                        video, include_description, config.include_meta_info
+                    )
+                    all_subtitles.append(f"{header}\n\n[字幕获取失败: {error_message}]")
+                    stats["subtitle_sources"]["failed"] += 1
 
-            return combined_text, stats
+                # Update progress
+                progress.advance(task)
 
-        finally:
-            # Clean up the environment variable
-            if "export_user_subtitles" in os.environ:
-                del os.environ["export_user_subtitles"]
-            # Clean up charging-related environment variables
-            if "CHARGING_WARNING_SHOWN" in os.environ:
-                del os.environ["CHARGING_WARNING_SHOWN"]
-            if "CHARGING_CONFIRMED" in os.environ:
-                del os.environ["CHARGING_CONFIRMED"]
+        # Combine all subtitles with double newline between videos
+        combined_text = "\n\n\n".join(all_subtitles)
+
+        # Calculate total token count (rough estimate)
+        stats["total_tokens"] = len(combined_text.split()) * 1.5
+
+        # Display summary
+        console.print(f"[green]Processing complete![/green]")
+        console.print(
+            f"[green]Processed {stats['processed_videos']} videos, found subtitles for {stats['videos_with_subtitles']} videos[/green]"
+        )
+
+        return combined_text, stats

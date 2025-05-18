@@ -599,29 +599,5 @@ async def main():
         rprint(f"[red]Error:[/red] {str(e)}")
 
 
-def cleanup_environment_variables():
-    """Clean up all environment variables set during the program run"""
-    # Charging related environment variables
-    charging_vars = [
-        "CHARGING_WARNING_SHOWN",
-        "CHARGING_CONFIRMED",
-        "CHARGING_DECISION_MADE",
-        "CHARGING_DOWNLOAD_ALL",
-        "CHARGING_SKIP_ALL",
-    ]
-
-    for var in charging_vars:
-        if var in os.environ:
-            del os.environ[var]
-
-    # Export related environment variables
-    if "export_user_subtitles" in os.environ:
-        del os.environ["export_user_subtitles"]
-
-
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    finally:
-        # Always clean up environment variables
-        cleanup_environment_variables()
+    asyncio.run(main())

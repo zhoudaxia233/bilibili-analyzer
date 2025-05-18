@@ -313,34 +313,30 @@ def download_with_ytdlp(
 
     # Check if video is charging exclusive content - OUTSIDE any progress/status indicators
     if video_info and video_info.is_charging_exclusive:
-        # Check global charging video decisions
-        if os.environ.get("CHARGING_SKIP_ALL") == "1" or skip_charging:
+        # Check if skip_charging is set
+        if skip_charging:
             print(
                 f"Skipping charging exclusive video: {video_info.title} (BVID: {video_info.bvid})"
             )
             return
 
-        # If force download is set or global decision to download all has been made
-        if force_charging or os.environ.get("CHARGING_DOWNLOAD_ALL") == "1":
+        # If force download is set
+        if force_charging:
             print("Proceeding with download as per user settings...")
-        # If user has explicitly made a decision (in bilibili_client.py), we don't need to ask again
-        elif os.environ.get("CHARGING_DECISION_MADE") == "1":
-            # This shouldn't happen, but just in case
-            print("Proceeding based on previous decision...")
-        # Don't ask again if we've already asked about this exact operation
-        elif os.environ.get("CHARGING_CONFIRMED") == "1":
-            print("Proceeding with download...")
         else:
-            # We should no longer get here since all decisions are made in bilibili_client.py
-            # but keep as a fallback
+            # Fallback warning for any other case
             print("\n" + "=" * 80)
             print(
                 f"Warning: '{video_info.title}' is a charging exclusive video ({video_info.charging_level})."
             )
             print("Only preview content (~1 minute) will be available without payment.")
             print("=" * 80)
-            print("Download cancelled as no charging decision was made.")
-            return
+
+            # Ask for user confirmation for this specific download
+            response = input("Proceed with download? (y/n): ").strip().lower()
+            if response not in ("y", "yes"):
+                print("Download cancelled.")
+                return
 
     cmd = ["yt-dlp"]
 
