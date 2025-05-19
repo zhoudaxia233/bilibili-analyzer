@@ -144,6 +144,7 @@ async def test_main_video_info(mocker, mock_video_info):
         identifier="BV1xx411c7mD",
         user=False,
         text=False,
+        json=False,
         content="subtitles,uploader",
         output=None,
         browser=None,
@@ -224,6 +225,7 @@ async def test_main_user_videos(mocker):
         identifier="12345678",
         user=True,  # Explicitly request user videos
         text=False,
+        json=False,
         content="subtitles,uploader",
         output=None,
         browser=None,
@@ -271,6 +273,7 @@ async def test_main_video_text(mocker):
         identifier="BV1xx411c7mD",
         user=False,
         text=True,  # Request text content
+        json=False,
         content="subtitles,uploader",
         output=None,
         browser=None,
