@@ -6,6 +6,10 @@ from pathlib import Path
 import os
 import json
 from datetime import datetime
+from pages.visualizations import (
+    get_user_videos as fetch_user_videos,
+    parse_user_videos as parse_user_videos_table,
+)
 
 # Set page configuration
 st.set_page_config(
@@ -369,10 +373,30 @@ def show_user_section():
         no_description = st.checkbox("No Description")
         no_meta_info = st.checkbox("No Meta Info")
 
-    # Action button
-    export_button = st.button("Export User Subtitles", type="primary")
+    # New: Button to fetch user video list
+    fetch_list_button = st.button("Fetch User Video List", type="primary")
+    export_button = None
+    video_df = None
+    if user_identifier and fetch_list_button:
+        with st.spinner("Fetching user video list..."):
+            browser_arg = None if browser == "None" else browser.lower()
+            output = fetch_user_videos(user_identifier, browser_arg)
+            if output:
+                video_df = parse_user_videos_table(output)
+                if video_df is not None and not video_df.empty:
+                    st.markdown(
+                        '<div class="result-container">', unsafe_allow_html=True
+                    )
+                    st.subheader(f"Video List for User {user_identifier}")
+                    st.dataframe(video_df, use_container_width=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    export_button = st.button("Export User Subtitles", type="primary")
+                else:
+                    st.warning("No videos found for this user.")
+            else:
+                st.error("Failed to fetch user video list.")
 
-    # Show results
+    # Show export button only after list is fetched
     if user_identifier and export_button:
         with st.spinner("Exporting user subtitles... This may take a while."):
             browser_arg = None if browser == "None" else browser.lower()

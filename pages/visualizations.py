@@ -10,44 +10,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from datetime import datetime
 
-# Set page configuration
-st.set_page_config(
-    page_title="Visualizations - Bilibili Analyzer",
-    page_icon="🎬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Custom CSS to make the UI more beautiful
-st.markdown(
-    """
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #FC8EAC;
-        margin-bottom: 1rem;
-    }
-    .sub-header {
-        font-size: 1.5rem;
-        font-weight: 500;
-        color: #73C2FB;
-        margin-bottom: 1rem;
-    }
-    .info-text {
-        font-size: 1rem;
-        color: #888888;
-    }
-    .viz-container {
-        background-color: #1E1E1E;
-        border-radius: 10px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-    }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+# Do NOT run any Streamlit commands at import time!
 
 
 def run_command(cmd):
@@ -254,6 +217,37 @@ def generate_visualizations(df):
 
 
 def main():
+    # Custom CSS to make the UI more beautiful
+    st.markdown(
+        """
+    <style>
+        .main-header {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #FC8EAC;
+            margin-bottom: 1rem;
+        }
+        .sub-header {
+            font-size: 1.5rem;
+            font-weight: 500;
+            color: #73C2FB;
+            margin-bottom: 1rem;
+        }
+        .info-text {
+            font-size: 1rem;
+            color: #888888;
+        }
+        .viz-container {
+            background-color: #1E1E1E;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
     # Main header
     st.markdown('<div class="main-header">Visualizations</div>', unsafe_allow_html=True)
     st.markdown(
