@@ -4,6 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 from datetime import datetime
+import json
 
 from dotenv import load_dotenv
 from rich.console import Console
@@ -218,6 +219,11 @@ async def main():
         "--clear-credentials",
         action="store_true",
         help="Clear all stored Bilibili credentials",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output video information as JSON (for programmatic use)",
     )
 
     args = parser.parse_args()
@@ -603,7 +609,10 @@ async def main():
         else:
             # Handle single video
             video = await client.get_video_info(args.identifier)
-            display_video_info(video)
+            if args.json:
+                print(json.dumps(video.model_dump(), ensure_ascii=False))
+            else:
+                display_video_info(video)
     except Exception as e:
         rprint(f"[red]Error:[/red] {str(e)}")
 

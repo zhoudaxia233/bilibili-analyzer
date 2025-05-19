@@ -69,6 +69,12 @@ st.markdown(
         padding: 1rem;
         margin-top: 1rem;
     }
+    .viz-container {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-top: 1rem;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -94,8 +100,8 @@ def run_command(cmd):
 
 
 def get_video_info(identifier, browser=None):
-    """Get video information using the Bilibili client"""
-    cmd = ["python", "main.py", identifier]
+    """Get video information using the Bilibili client, always as JSON"""
+    cmd = ["python", "main.py", identifier, "--json"]
 
     if browser:
         cmd.extend(["--browser", browser])
@@ -148,45 +154,92 @@ def export_user_subtitles(
     return run_command(cmd)
 
 
-def parse_video_info(output):
-    """Parse the video information from the command output"""
-    if not output:
-        return None
+def show_video_info_streamlit(video_info: dict):
+    """Display video info in a beautiful card layout using Streamlit."""
+    if not video_info:
+        st.warning("No video information available.")
+        return
 
-    # Extract video information
-    video_info = {}
+    def format_duration(seconds):
+        try:
+            seconds = int(seconds)
+        except Exception:
+            return str(seconds)
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        seconds = seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-    # Parse BVID
-    bvid_match = re.search(r"BVID\s+(.+)", output)
-    if bvid_match:
-        video_info["BVID"] = bvid_match.group(1)
+    st.markdown('<div class="viz-container">', unsafe_allow_html=True)
+    st.markdown(
+        f"<h3 style='color:#FC8EAC;margin-bottom:0.5rem;'>🎬 {video_info.get('title', '')}</h3>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<span style='color:#888;'>BVID: {video_info.get('bvid', '')}</span>",
+        unsafe_allow_html=True,
+    )
 
-    # Parse Title
-    title_match = re.search(r"Title\s+(.+)", output)
-    if title_match:
-        video_info["Title"] = title_match.group(1)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(
+            f"<b>⏱ Duration:</b> <span style='color:#73C2FB'>{format_duration(video_info.get('duration', 0))}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<b>📅 Upload Time:</b> <span style='color:#73C2FB'>{video_info.get('upload_time', '')}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<b>👁️ Views:</b> <span style='color:#73C2FB'>{video_info.get('view_count', 0):,}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<b>👍 Likes:</b> <span style='color:#73C2FB'>{video_info.get('like_count', 0):,}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<b>🪙 Coins:</b> <span style='color:#73C2FB'>{video_info.get('coin_count', 0):,}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<b>⭐ Favorites:</b> <span style='color:#73C2FB'>{video_info.get('favorite_count', 0):,}</span>",
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f"<b>🔁 Shares:</b> <span style='color:#73C2FB'>{video_info.get('share_count', 0):,}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<b>💬 Comments:</b> <span style='color:#73C2FB'>{video_info.get('comment_count', 0):,}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<b>👤 Uploader:</b> <span style='color:#73C2FB'>{video_info.get('owner_name', '')} (UID: {video_info.get('owner_mid', '')})</span>",
+            unsafe_allow_html=True,
+        )
+        if video_info.get("is_charging_exclusive"):
+            st.markdown(
+                f"<span style='color:#FF4B4B;font-weight:bold;'>⚡ Charging Exclusive Content</span>",
+                unsafe_allow_html=True,
+            )
+            if video_info.get("charging_level"):
+                st.markdown(
+                    f"<span style='color:#FFB347;'>Charging Level: {video_info.get('charging_level')}</span>",
+                    unsafe_allow_html=True,
+                )
 
-    # Parse Duration
-    duration_match = re.search(r"Duration\s+(.+)", output)
-    if duration_match:
-        video_info["Duration"] = duration_match.group(1)
+    desc = video_info.get("description", "")
+    if desc:
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown(f"<b>Description:</b>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='white-space: pre-wrap; color:#ccc'>{desc}</div>",
+            unsafe_allow_html=True,
+        )
 
-    # Parse Views
-    views_match = re.search(r"Views\s+(\d+)", output)
-    if views_match:
-        video_info["Views"] = int(views_match.group(1))
-
-    # Parse Likes
-    likes_match = re.search(r"Likes\s+(\d+)", output)
-    if likes_match:
-        video_info["Likes"] = int(likes_match.group(1))
-
-    # Parse Uploader
-    uploader_match = re.search(r"Uploader\s+(.+)", output)
-    if uploader_match:
-        video_info["Uploader"] = uploader_match.group(1)
-
-    return video_info
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def show_video_section():
@@ -233,19 +286,12 @@ def show_video_section():
                         '<div class="result-container">', unsafe_allow_html=True
                     )
                     st.subheader("Video Information")
-                    video_info = parse_video_info(output)
-
-                    if video_info:
-                        # Display in two columns
-                        col1, col2 = st.columns(2)
-                        keys = list(video_info.keys())
-                        mid = len(keys) // 2
-
-                        for i, key in enumerate(keys):
-                            if i < mid:
-                                col1.metric(key, video_info[key])
-                            else:
-                                col2.metric(key, video_info[key])
+                    try:
+                        video_info = json.loads(output)
+                        show_video_info_streamlit(video_info)
+                    except Exception as e:
+                        st.error(f"Failed to parse video info as JSON: {e}")
+                        st.text(output)
 
                     # Show raw output in expander
                     with st.expander("View Raw Output"):
